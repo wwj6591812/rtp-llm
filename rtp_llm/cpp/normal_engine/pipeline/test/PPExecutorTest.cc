@@ -781,8 +781,8 @@ protected:
         auto lane_plan = plan;
         if (non_root) {
             /** The sender's TP peer owns execution inputs, while sampling and response state stay on root. */
-            lane_plan.sampling_plan                     = {};
-            lane_plan.output_config                     = {};
+            lane_plan.sampling_plan = {};
+            lane_plan.output_config = {};
             lane_plan.finished_request_ids.clear();
             lane_plan.is_decode                         = false;
             lane_plan.draft_next_position_ids           = torch::Tensor();
@@ -1176,13 +1176,13 @@ TEST_F(PPExecutorTest, CommonRejectsChunkedPrefillBeforeModelConstruction) {
     const StageCase cases[] = {{RoleType::PREFILL, 0}, {RoleType::DECODE, 1}, {RoleType::PDFUSION, 2}};
     for (const auto& test_case : cases) {
         for (bool warm_up : {false, true}) {
-            SCOPED_TRACE(::testing::Message() << "role=" << test_case.role << ", stage=" << test_case.stage
-                                              << ", warm_up=" << warm_up);
+            SCOPED_TRACE(::testing::Message()
+                         << "role=" << test_case.role << ", stage=" << test_case.stage << ", warm_up=" << warm_up);
             auto params                                                    = makeStageParams(test_case.stage);
             params.pd_sep_config.role_type                                 = test_case.role;
             params.parallelism_config.role_type                            = test_case.role;
             params.runtime_config.fifo_scheduler_config.prefill_chunk_size = 1;
-            model_constructed = false;
+            model_constructed                                              = false;
             try {
                 PPExecutor executor(params, nullptr, warm_up);
                 FAIL() << "PP accepted chunked prefill";
@@ -1348,10 +1348,10 @@ TEST_F(PPExecutorTpTest, CommonWarmupSynchronizesLocallyOnEveryStageWithoutPipel
             if (rank != 0) {
                 broadcasts.replay();
             }
-            auto       params   = makeTpStageParams(stage, rank);
-            PPExecutor executor(params, nullptr, true);
-            auto*      recorded = installModel<RecordingStageModel>(executor, params.parallelism_config);
-            auto*      wire     = attachTransport(executor);
+            auto           params = makeTpStageParams(stage, rank);
+            PPExecutor     executor(params, nullptr, true);
+            auto*          recorded = installModel<RecordingStageModel>(executor, params.parallelism_config);
+            auto*          wire     = attachTransport(executor);
             ScheduleOutput schedule;
             if (rank == 0) {
                 auto stream = makeStream(ResourceContext{}, params.model_config_, 101, {1, 2}, 1);
@@ -1527,9 +1527,9 @@ TEST_F(PPExecutorTest, CommonActivationSendKeepsSnapshotUntilReclaimedAndMetadat
         SCOPED_TRACE(noncontiguous);
         auto       params = makeStageParams(1);
         PPExecutor executor(params, nullptr, false);
-        auto* wire = attachTransport(executor);
-        auto backing = torch::arange(16, torch::TensorOptions(torch::kFloat32).device(torch::kCUDA)).reshape({4, 4});
-        auto source  = noncontiguous ? backing.narrow(1, 0, 2) : backing;
+        auto*      wire = attachTransport(executor);
+        auto backing    = torch::arange(16, torch::TensorOptions(torch::kFloat32).device(torch::kCUDA)).reshape({4, 4});
+        auto source     = noncontiguous ? backing.narrow(1, 0, 2) : backing;
         ASSERT_EQ(source.is_contiguous(), !noncontiguous);
         const auto expected = source.clone();
         auto&      tickets  = executor.slots_[0].activation_sends;
@@ -2139,12 +2139,12 @@ TEST_F(PPExecutorTest, FirstEnginePauseWaitsForResultAfterRestart) {
     EXPECT_TRUE(pp->process(ScheduleOutput{{stream}}).ok());
     EXPECT_EQ(receive_started.wait_for(std::chrono::seconds(10)), std::future_status::ready);
     const auto sends_before_pause = send_count.load();
-    observe_resume = true;
+    observe_resume                = true;
 
     engine->pause();
     std::promise<void> stepping;
     auto               step_started = stepping.get_future();
-    auto step = std::async(std::launch::async, [&] {
+    auto               step         = std::async(std::launch::async, [&] {
         cuda_graph::setDevice(static_cast<int>(params.parallelism_config.local_rank));
         c10::InferenceMode inference_guard(true);
         stepping.set_value();
@@ -2183,18 +2183,18 @@ TEST_F(PPExecutorTest, FirstEngineSystemPromptsDrainAndRetireBeforeRequestIdReus
     auto engine        = createMockEngine(config);
     ASSERT_TRUE(engine->stop().ok());
 
-    auto params                                    = makeStageParams(0);
-    params.model_config_                           = engine->model_config_;
-    params.kv_cache_config                         = engine->kv_cache_config;
-    params.parallelism_config.pp_size              = 2;
-    params.parallelism_config.world_size           = 2;
+    auto params                                     = makeStageParams(0);
+    params.model_config_                            = engine->model_config_;
+    params.kv_cache_config                          = engine->kv_cache_config;
+    params.parallelism_config.pp_size               = 2;
+    params.parallelism_config.world_size            = 2;
     params.parallelism_config.pp_stage_layer_counts = {1, 1};
-    auto  executor = std::make_unique<PPExecutor>(params, engine->resourceContext().cache_manager, false);
-    auto* pp       = executor.get();
-    auto* wire     = attachTransport(*pp);
-    auto* model    = installModel<RecordingStageModel>(*pp, params.parallelism_config);
-    engine->parallelism_config                      = params.parallelism_config;
-    engine->executor_                               = std::move(executor);
+    auto  executor             = std::make_unique<PPExecutor>(params, engine->resourceContext().cache_manager, false);
+    auto* pp                   = executor.get();
+    auto* wire                 = attachTransport(*pp);
+    auto* model                = installModel<RecordingStageModel>(*pp, params.parallelism_config);
+    engine->parallelism_config = params.parallelism_config;
+    engine->executor_          = std::move(executor);
     engine->kv_cache_config.multi_task_prompt_tokens = {{"first", {1, 2, 3}}, {"second", {4, 5, 6, 7}}};
 
     std::vector<PPExecutionPlan> plans;
@@ -2209,10 +2209,10 @@ TEST_F(PPExecutorTest, FirstEngineSystemPromptsDrainAndRetireBeforeRequestIdReus
         cleanup_payload_offsets.push_back(wire->sent_tensors.size() + 1);
     };
     std::vector<std::promise<void>> receiving(2);
-    auto   first_receiving  = receiving[0].get_future();
-    auto   second_receiving = receiving[1].get_future();
-    size_t receive_count   = 0;
-    wire->on_receive = [&](const torch::Tensor& tensor) {
+    auto                            first_receiving  = receiving[0].get_future();
+    auto                            second_receiving = receiving[1].get_future();
+    size_t                          receive_count    = 0;
+    wire->on_receive                                 = [&](const torch::Tensor& tensor) {
         if (tensor.scalar_type() == torch::kInt64 && receive_count < receiving.size()) {
             receiving[receive_count++].set_value();
         }
@@ -2256,7 +2256,7 @@ TEST_F(PPExecutorTest, FirstEngineSystemPromptsDrainAndRetireBeforeRequestIdReus
 
         GenerateConfig query_config;
         query_config.task_id = task_id;
-        const auto prompt = engine->resourceContext().system_prompt->getPromptParams(query_config);
+        const auto prompt    = engine->resourceContext().system_prompt->getPromptParams(query_config);
         EXPECT_EQ(prompt.prompt_tokens, tokens);
         ASSERT_FALSE(prompt.group_block_ids.at("full").empty());
 
@@ -2270,8 +2270,8 @@ TEST_F(PPExecutorTest, FirstEngineSystemPromptsDrainAndRetireBeforeRequestIdReus
         const auto& blocks = stream->kvCacheMutable().blocks(0, "full");
         ASSERT_GE(blocks.size(), reused_blocks);
         ASSERT_GE(prompt.group_block_ids.at("full").size(), reused_blocks);
-        EXPECT_TRUE(std::equal(
-            blocks.begin(), blocks.begin() + reused_blocks, prompt.group_block_ids.at("full").begin()));
+        EXPECT_TRUE(
+            std::equal(blocks.begin(), blocks.begin() + reused_blocks, prompt.group_block_ids.at("full").begin()));
     }
 }
 
@@ -2288,8 +2288,8 @@ TEST_F(PPExecutorTest, FirstPdDecodeUsesPreparedCandidatesWithoutOverwritingThem
         ASSERT_TRUE(resources.cache_manager->init());
         PPExecutor executor(params, resources.cache_manager, false);
         auto*      wire     = attachTransport(executor);
-        auto* recorded = installModel<RecordingDraftModel>(executor);
-        auto  stream   = makeStream(resources, params.model_config_, 101, {1, 2}, 1);
+        auto*      recorded = installModel<RecordingDraftModel>(executor);
+        auto       stream   = makeStream(resources, params.model_config_, 101, {1, 2}, 1);
         stream->fakeInitKVBlock(4);
         stream->update({intTensor({7}).reshape({1, 1}), 1}, false);
         stream->initSpeculativeHandoffPositions();
@@ -2411,8 +2411,8 @@ TEST_F(PPExecutorTest, FirstAdmissionRejectsAllProbsWithSpeculation) {
                 GenerateConfig config;
                 config.max_new_tokens   = 20;
                 config.return_all_probs = mode;
-                auto stream             = makeStream(
-                    ResourceContext{}, params.model_config_, 100 + static_cast<int>(mode), {1, 2}, config);
+                auto stream =
+                    makeStream(ResourceContext{}, params.model_config_, 100 + static_cast<int>(mode), {1, 2}, config);
                 stream->setPPInflight();
                 streams.push_back(stream);
                 rejected.push_back(stream);
@@ -2466,7 +2466,7 @@ TEST_F(PPExecutorTest, FirstAdmissionReturnsAllProbsWithoutSpeculation) {
         config.return_all_probs = mode;
         auto stream             = makeStream(ResourceContext{}, params.model_config_, 101, {1, 2}, config);
         stream->setPPInflight();
-        auto result = makeSingleTokenResult(101, 17);
+        auto result                         = makeSingleTokenResult(101, 17);
         result.request_outputs[0].all_probs = torch::full({1, 64}, 1.0f / 64, torch::kFloat32);
         wire->enqueueObject(pp_serialization::serializeExecutionResult(result));
 
@@ -2553,8 +2553,7 @@ TEST_F(PPExecutorTest, FirstAdmissionRejectsTiledSamplingWithSpeculation) {
         if (type != SP_TYPE_NONE) {
             EXPECT_EQ(stream->statusInfo().code(), ErrorCode::INVALID_PARAMS);
             EXPECT_NE(stream->statusInfo().ToString().find(
-                          type == SP_TYPE_DSPARK ? "num_return_sequences > 1" :
-                                                  "incompatible with logits processor"),
+                          type == SP_TYPE_DSPARK ? "num_return_sequences > 1" : "incompatible with logits processor"),
                       std::string::npos);
             EXPECT_FALSE(stream->isPPInflight());
             EXPECT_FALSE(stream->getSPOutputBuffer());
@@ -2772,8 +2771,8 @@ TEST_F(PPExecutorTpTest, ShutdownPlanStopsEveryTpRankBeforeOrDuringFinishWithout
                                         nullptr,
                                         nullptr,
                                         stage == 2 && type == SP_TYPE_MTP ? propose.get() : nullptr);
-                    auto*      wire     = attachTransport(executor);
-                    auto*      recorded = installModel<RecordingStageModel>(executor, params.parallelism_config);
+                    auto*      wire         = attachTransport(executor);
+                    auto*      recorded     = installModel<RecordingStageModel>(executor, params.parallelism_config);
                     broadcasts.on_broadcast = [&] {
                         EXPECT_EQ(stage, 0);
                         EXPECT_EQ(wire->sent_tensors.size(), 2 * executor.current_slot_);
@@ -2848,11 +2847,11 @@ TEST_F(PPExecutorTpTest, FirstTpPeerSendsAndExecutesSyncedInputWithoutOwningRequ
         if (rank != 0) {
             broadcasts.replay();
         }
-        auto           params = makeTpStageParams(0, rank);
-        PPExecutor     executor(params, nullptr, false);
-        auto*          wire     = attachTransport(executor);
-        auto*          recorded = installModel<RecordingStageModel>(executor, params.parallelism_config);
-        wire->on_send = [&](const torch::Tensor&) {
+        auto       params = makeTpStageParams(0, rank);
+        PPExecutor executor(params, nullptr, false);
+        auto*      wire     = attachTransport(executor);
+        auto*      recorded = installModel<RecordingStageModel>(executor, params.parallelism_config);
+        wire->on_send       = [&](const torch::Tensor&) {
             if (wire->sent_tensors.size() < 2) {
                 EXPECT_GT(broadcasts.position(), 0u);
                 EXPECT_EQ(broadcasts.position(), broadcasts.size());
@@ -2900,8 +2899,8 @@ TEST_F(PPExecutorTpTest, MiddleTpLanesExecuteAndForwardCompleteInputsWithoutBroa
         }
         auto       params = makeTpStageParams(1, rank);
         PPExecutor executor(params, nullptr, false);
-        auto*      wire                           = attachTransport(executor);
-        auto       plan                           = makePlan(params);
+        auto*      wire = attachTransport(executor);
+        auto       plan = makePlan(params);
         /** Distinct lane values expose an accidental root rebroadcast at the receiver. */
         plan.model_input.combo_tokens             = plan.model_input.combo_tokens + rank * 10;
         plan.model_input.need_all_logits          = true;
@@ -2911,7 +2910,7 @@ TEST_F(PPExecutorTpTest, MiddleTpLanesExecuteAndForwardCompleteInputsWithoutBroa
         plan.model_input.kv_cache_kernel_block_id = plan.model_input.kv_cache_block_id.clone();
         enqueuePlan(*wire, plan, rank != 0);
         auto* recorded = installModel<RecordingStageModel>(executor, params.parallelism_config);
-        wire->on_send = [&](const torch::Tensor&) {
+        wire->on_send  = [&](const torch::Tensor&) {
             if (wire->sent_tensors.size() < 2) {
                 EXPECT_EQ(broadcasts.position(), 0u);
             }
@@ -3376,12 +3375,12 @@ TEST_F(PPExecutorTest, FirstQueuedTasksKeepTheirMetricsUntilResultProcessing) {
     auto       monitor = std::make_shared<kmonitor::KMonitor>("pp_sampling_metrics_test");
     monitor->SetServiceName("");
     kmonitor::MetricsTags base_tags("dp_rank", "0");
-    executor.metrics_reporter_     = std::make_shared<kmonitor::MetricsReporter>(monitor, "", base_tags);
-    int64_t snapshot_time_ms       = 0;
+    executor.metrics_reporter_      = std::make_shared<kmonitor::MetricsReporter>(monitor, "", base_tags);
+    int64_t snapshot_time_ms        = 0;
     auto    expect_executor_metrics = [&](int64_t model_forward_us, int64_t sample_input_us) {
         const std::unordered_map<std::string, int64_t> durations{{"rtp_llm_model_forward_us", model_forward_us},
                                                                     {"rtp_llm_sample_input_us", sample_input_us}};
-        kmonitor::MetricsCollector snapshot;
+        kmonitor::MetricsCollector                     snapshot;
         monitor->GetMetrics(&snapshot, {kmonitor::NORMAL}, snapshot_time_ms += 10000);
         std::unordered_map<std::string, size_t> samples;
         for (const auto* record : snapshot.GetRecords().getRecords()) {
@@ -3980,15 +3979,11 @@ TEST_F(PPExecutorTest, LastRequestErrorsPreserveHealthyExecutionAndStillSendResu
             SCOPED_TRACE(::testing::Message() << "type=" << type << ", phase=" << phase);
             auto       params  = makeStageParams(2, type);
             auto       propose = makeMtpProposeParams(params);
-            PPExecutor executor(params,
-                                nullptr,
-                                false,
-                                nullptr,
-                                nullptr,
-                                type == SP_TYPE_NONE ? nullptr : propose.get());
-            auto*      wire     = attachTransport(executor);
-            auto       plan     = makePlan(params);
-            auto       target   = std::make_unique<RecordingDraftModel>();
+            PPExecutor executor(
+                params, nullptr, false, nullptr, nullptr, type == SP_TYPE_NONE ? nullptr : propose.get());
+            auto* wire          = attachTransport(executor);
+            auto  plan          = makePlan(params);
+            auto  target        = std::make_unique<RecordingDraftModel>();
             target->next_tokens = {7, 8};
             executor.setModel(std::move(target));
             RecordingDraftModel* recorded_draft = nullptr;
@@ -4046,18 +4041,18 @@ TEST_F(PPExecutorTest, LastSamplingKeepsRawOutputsUntilResultAssembly) {
     for (bool verify : {false, true}) {
         for (bool all_failed : {false, true}) {
             SCOPED_TRACE(::testing::Message() << "verify=" << verify << ", all_failed=" << all_failed);
-            auto params = makeStageParams(2, SP_TYPE_MTP);
-            auto propose = makeMtpProposeParams(params);
+            auto       params  = makeStageParams(2, SP_TYPE_MTP);
+            auto       propose = makeMtpProposeParams(params);
             PPExecutor executor(params, nullptr, false, nullptr, nullptr, propose.get());
-            auto plan = makePlan(params, verify);
+            auto       plan = makePlan(params, verify);
             for (int row = all_failed ? 0 : 1; row < 2; ++row) {
                 plan.sampling_plan.logits_processor_configs[row].grammar_type = "unsupported";
             }
             RecordingDraftModel target;
-            target.next_tokens = verify ? std::vector<int32_t>{11, 40, 13, 14, 21, 22, 23, 24} :
-                                          std::vector<int32_t>{7, 8};
+            target.next_tokens =
+                verify ? std::vector<int32_t>{11, 40, 13, 14, 21, 22, 23, 24} : std::vector<int32_t>{7, 8};
             const auto model_output = target.forward(plan.model_input);
-            auto sampling = executor.sampleTokens(plan, model_output);
+            auto       sampling     = executor.sampleTokens(plan, model_output);
             EXPECT_TRUE(sampling.sampler_output.token_ids.is_cuda());
             EXPECT_TRUE(sampling.sampler_output.success.is_cuda());
             if (verify) {
@@ -4127,41 +4122,41 @@ TEST_F(PPExecutorTpTest, LastCompletionWaitsForNonRootAndPlaceholderForward) {
                 continue;
             }
             SCOPED_TRACE(::testing::Message() << "rank=" << rank << ", phase=" << phase);
-            auto params = makeTpStageParams(2, rank, SP_TYPE_NONE);
+            auto       params = makeTpStageParams(2, rank, SP_TYPE_NONE);
             PPExecutor executor(params, nullptr, false);
-            auto* wire = attachTransport(executor);
-            auto plan = phase == "fake" ? makeFakePlan(params, false) :
-                                          makePlan(params, false, phase == "prefill_only");
+            auto*      wire = attachTransport(executor);
+            auto       plan =
+                phase == "fake" ? makeFakePlan(params, false) : makePlan(params, false, phase == "prefill_only");
             enqueuePlan(*wire, plan, rank != 0);
 
             std::unique_ptr<CudaStreamGate> gate;
-            std::promise<CudaStreamGate*> submitted;
-            auto pending = submitted.get_future();
-            std::promise<void> returned;
-            auto finished = returned.get_future();
-            auto completion = cuda_graph::makeGraphEvent();
+            std::promise<CudaStreamGate*>   submitted;
+            auto                            pending = submitted.get_future();
+            std::promise<void>              returned;
+            auto                            finished   = returned.get_future();
+            auto                            completion = cuda_graph::makeGraphEvent();
             const auto producer = rank != 0 || phase == "prefill_only" ? cuda_graph::graphGetStreamFromPool(false) :
-                                                                       cuda_graph::graphGetCurrentStream();
+                                                                         cuda_graph::graphGetCurrentStream();
             completion.record(producer);
             producer.synchronize();
-            auto model = std::make_unique<PendingForwardModel>();
+            auto model    = std::make_unique<PendingForwardModel>();
             model->submit = [&] {
                 gate = std::make_unique<CudaStreamGate>(producer);
                 completion.record(producer);
                 submitted.set_value(gate.get());
             };
             executor.setModel(std::move(model));
-            auto release = std::async(std::launch::async, [&] {
+            auto       release            = std::async(std::launch::async, [&] {
                 if (pending.wait_for(std::chrono::seconds(5)) != std::future_status::ready) {
                     return false;
                 }
-                auto* active = pending.get();
+                auto*      active  = pending.get();
                 const bool entered = active->waitUntilEntered();
                 const bool waited = finished.wait_for(std::chrono::milliseconds(200)) == std::future_status::timeout;
                 active->release();
                 return entered && waited;
             });
-            const auto status = executor.process(ScheduleOutput{});
+            const auto status             = executor.process(ScheduleOutput{});
             const bool complete_on_return = completion.query();
             returned.set_value();
             EXPECT_TRUE(release.get());
@@ -4178,15 +4173,15 @@ TEST_F(PPExecutorTpTest, LastCompletionWaitsForNonRootAndPlaceholderForward) {
 TEST_F(PPExecutorTest, FillResultWaitsForTargetOutputsWithoutDraft) {
     for (bool verify : {false, true}) {
         SCOPED_TRACE(verify);
-        auto params  = makeStageParams(2, verify ? SP_TYPE_MTP : SP_TYPE_NONE, 2);
-        auto propose = verify ? makeMtpProposeParams(params) : nullptr;
+        auto       params  = makeStageParams(2, verify ? SP_TYPE_MTP : SP_TYPE_NONE, 2);
+        auto       propose = verify ? makeMtpProposeParams(params) : nullptr;
         PPExecutor executor(params, nullptr, false, nullptr, nullptr, propose.get());
-        auto       plan            = makePlan(params, verify);
-        const auto stream          = cuda_graph::graphGetCurrentStream();
-        const auto expected_tokens = verify ? intTensor({11, 12, 14, 21, 25, 0}).reshape({2, 3}) :
-                                             intTensor({1, 7, 3, 8}).reshape({2, 2});
-        const auto tokens_gpu  = expected_tokens.cuda();
-        const auto lengths_gpu = intTensor({3, 2}).cuda();
+        auto       plan   = makePlan(params, verify);
+        const auto stream = cuda_graph::graphGetCurrentStream();
+        const auto expected_tokens =
+            verify ? intTensor({11, 12, 14, 21, 25, 0}).reshape({2, 3}) : intTensor({1, 7, 3, 8}).reshape({2, 2});
+        const auto       tokens_gpu  = expected_tokens.cuda();
+        const auto       lengths_gpu = intTensor({3, 2}).cuda();
         PPSamplingOutput sampling;
         sampling.request_errors.assign(2, ErrorInfo::OkStatus());
         sampling.sampler_output.success =
@@ -4222,13 +4217,13 @@ TEST_F(PPExecutorTest, FillResultWaitsForTargetOutputsWithoutDraft) {
         }
         completion.record(stream);
         std::promise<void> returned;
-        auto finished = returned.get_future();
-        auto release = std::async(std::launch::async, [&] {
+        auto               finished = returned.get_future();
+        auto               release  = std::async(std::launch::async, [&] {
             const bool waited = finished.wait_for(std::chrono::milliseconds(200)) == std::future_status::timeout;
             gate.release();
             return waited;
         });
-        PPExecutionResult result;
+        PPExecutionResult  result;
         executor.batch_stream_processor_->fillExecutionResult(plan, {}, sampling, {}, result);
         const bool complete_on_return = completion.query();
         returned.set_value();
@@ -4247,12 +4242,12 @@ TEST_F(PPExecutorTest, FillResultWaitsForTargetOutputsWithoutDraft) {
 TEST_F(PPExecutorTest, FillResultWaitsForFakeSpeculativeWorkOnAnotherStream) {
     for (bool decode : {false, true}) {
         SCOPED_TRACE(decode);
-        auto params  = makeStageParams(2, SP_TYPE_MTP, 2);
-        auto propose = makeMtpProposeParams(params);
+        auto       params  = makeStageParams(2, SP_TYPE_MTP, 2);
+        auto       propose = makeMtpProposeParams(params);
         PPExecutor executor(params, nullptr, false, nullptr, nullptr, propose.get());
-        auto       plan     = makeFakePlan(params, decode);
-        auto       sampling = executor.sampleTokens(plan, {});
-        const auto producer = cuda_graph::graphGetStreamFromPool(false);
+        auto       plan       = makeFakePlan(params, decode);
+        auto       sampling   = executor.sampleTokens(plan, {});
+        const auto producer   = cuda_graph::graphGetStreamFromPool(false);
         auto       completion = cuda_graph::makeGraphEvent();
         completion.record(producer);
         producer.synchronize();
@@ -4260,13 +4255,13 @@ TEST_F(PPExecutorTest, FillResultWaitsForFakeSpeculativeWorkOnAnotherStream) {
         ASSERT_TRUE(gate.waitUntilEntered());
         completion.record(producer);
         std::promise<void> returned;
-        auto finished = returned.get_future();
-        auto release = std::async(std::launch::async, [&] {
+        auto               finished = returned.get_future();
+        auto               release  = std::async(std::launch::async, [&] {
             const bool waited = finished.wait_for(std::chrono::milliseconds(200)) == std::future_status::timeout;
             gate.release();
             return waited;
         });
-        PPExecutionResult result;
+        PPExecutionResult  result;
         executor.batch_stream_processor_->fillExecutionResult(plan, {}, sampling, {}, result);
         const bool complete_on_return = completion.query();
         returned.set_value();
@@ -4284,29 +4279,31 @@ TEST_F(PPExecutorTest, FillResultWaitsForFakeSpeculativeWorkOnAnotherStream) {
 TEST_F(PPExecutorTest, FillResultWaitsForLateDraftOutputsAfterTargetTransfer) {
     for (bool verify : {false, true}) {
         SCOPED_TRACE(verify);
-        auto params = makeStageParams(2, SP_TYPE_MTP, 2);
+        auto params                    = makeStageParams(2, SP_TYPE_MTP, 2);
         params.pd_sep_config.role_type = verify ? RoleType::PDFUSION : RoleType::PREFILL;
-        auto propose = makeMtpProposeParams(params);
-        PPExecutor executor(params, nullptr, false, nullptr, nullptr, propose.get());
-        auto plan = makePlan(params, verify);
-        const auto stream = cuda_graph::graphGetCurrentStream();
+        auto             propose       = makeMtpProposeParams(params);
+        PPExecutor       executor(params, nullptr, false, nullptr, nullptr, propose.get());
+        auto             plan   = makePlan(params, verify);
+        const auto       stream = cuda_graph::graphGetCurrentStream();
         PPSamplingOutput sampling;
         sampling.request_errors.assign(2, ErrorInfo::OkStatus());
-        sampling.sampler_output.success = torch::ones({verify ? 6 : 2}, torch::TensorOptions(torch::kBool).device(torch::kCUDA));
+        sampling.sampler_output.success =
+            torch::ones({verify ? 6 : 2}, torch::TensorOptions(torch::kBool).device(torch::kCUDA));
         if (verify) {
-            sampling.verify_output.accept_tokens = intTensor({11, 12, 14, 21, 25, 0}).reshape({2, 3}).cuda();
-            sampling.verify_output.accept_len = intTensor({3, 2}).cuda();
+            sampling.verify_output.accept_tokens     = intTensor({11, 12, 14, 21, 25, 0}).reshape({2, 3}).cuda();
+            sampling.verify_output.accept_len        = intTensor({3, 2}).cuda();
             sampling.verify_output.accept_tokens_cpu = sampling.verify_output.accept_tokens.to(torch::kCPU, true);
-            sampling.verify_output.accept_len_cpu = sampling.verify_output.accept_len.to(torch::kCPU, true);
+            sampling.verify_output.accept_len_cpu    = sampling.verify_output.accept_len.to(torch::kCPU, true);
             sampling.verify_output.transfer_done_event->record(stream);
         } else {
             sampling.sampler_output.token_ids = intTensor({1, 7, 3, 8}).reshape({2, 2}).cuda();
         }
-        const int width = verify ? 2 : 1;
+        const int     width = verify ? 2 : 1;
         PPDraftOutput draft;
         draft.proposals.token_ids = torch::zeros({2, width}, torch::TensorOptions(torch::kInt32).device(torch::kCUDA));
         if (!verify) {
-            draft.proposals.all_probs = torch::zeros({2, 1, 64}, torch::TensorOptions(torch::kFloat32).device(torch::kCUDA));
+            draft.proposals.all_probs =
+                torch::zeros({2, 1, 64}, torch::TensorOptions(torch::kFloat32).device(torch::kCUDA));
             draft.hidden_states = torch::zeros({2, 4}, draft.proposals.all_probs.options());
         }
         /** Initialize kernels and events before blocking the stream to avoid CUDA lazy-init waits. */
@@ -4327,13 +4324,13 @@ TEST_F(PPExecutorTest, FillResultWaitsForLateDraftOutputsAfterTargetTransfer) {
         }
         completion.record(stream);
         std::promise<void> returned;
-        auto finished = returned.get_future();
-        auto release = std::async(std::launch::async, [&] {
+        auto               finished = returned.get_future();
+        auto               release  = std::async(std::launch::async, [&] {
             const bool waited = finished.wait_for(std::chrono::milliseconds(200)) == std::future_status::timeout;
             gate.release();
             return waited;
         });
-        PPExecutionResult result;
+        PPExecutionResult  result;
         executor.batch_stream_processor_->fillExecutionResult(plan, {}, sampling, draft, result);
         const bool complete_on_return = completion.query();
         returned.set_value();
@@ -4770,13 +4767,13 @@ TEST_F(PPExecutorTest, PrefillHandoffUsesExplicitDraftOutputWithoutMtpBuffer) {
     auto       draft         = std::make_unique<RecordingDraftModel>();
     draft->expose_mtp_hidden = false;
     executor.draft_model_    = std::move(draft);
-    auto              plan   = makePlan(params);
+    auto             plan    = makePlan(params);
     PPSamplingOutput sampling;
     sampling.sampler_output.token_ids = intTensor({7, 8}).reshape({2, 1});
     GptModelOutputs target_output;
     target_output.all_hidden_states = torch::full({5, 4}, -100.0f, torch::TensorOptions().device(torch::kCUDA));
-    const auto result = executor.runDraftStep(plan, target_output, sampling);
-    auto expected = torch::arange(20, torch::kFloat32)
+    const auto result               = executor.runDraftStep(plan, target_output, sampling);
+    auto       expected             = torch::arange(20, torch::kFloat32)
                         .reshape({5, 4})
                         .narrow(1, 0, 2)
                         .index_select(0, torch::tensor({1, 4}, torch::kLong));
@@ -5213,13 +5210,13 @@ TEST_F(PPExecutorTest, LastDSparkProposalUsesRequestSamplingMode) {
         auto                                   gathered = executor.batch_stream_processor_->gatherExecutionPlan(
             StreamGroups({first, second}), {}, false, history_lengths, holder);
         ASSERT_TRUE(gathered.ok()) << gathered.status().ToString();
-        auto& plan               = gathered.value();
+        auto&            plan = gathered.value();
         PPSamplingOutput sampling;
         sampling.verify_output.accept_tokens = intTensor({30, 31}).reshape({2, 1});
-        sampling.verify_output.accept_len = intTensor({1, 1});
+        sampling.verify_output.accept_len    = intTensor({1, 1});
         GptModelOutputs target_output;
-        target_output.all_hidden_states = hidden;
-        const auto result = executor.runDraftStep(plan, target_output, sampling);
+        target_output.all_hidden_states  = hidden;
+        const auto  result               = executor.runDraftStep(plan, target_output, sampling);
         const auto  q                    = torch::stack({executor.dspark_q_.at(101), executor.dspark_q_.at(202)});
         const float expected_temperature = do_sample && non_top1 ? .5f : 1.e-6f;
         const auto  expected_q = torch::softmax(logits / expected_temperature, -1).reshape({2, width, 64}).cpu();
@@ -5400,14 +5397,10 @@ TEST_F(PPExecutorTest, LastOrdinaryFakeReturnsAResultButShutdownSkipsTargetAndDr
             SCOPED_TRACE(::testing::Message() << "type=" << type << ", decode=" << decode);
             auto       params  = makeStageParams(2, type);
             auto       propose = makeMtpProposeParams(params);
-            PPExecutor executor(params,
-                                nullptr,
-                                false,
-                                nullptr,
-                                nullptr,
-                                type == SP_TYPE_NONE ? nullptr : propose.get());
-            auto*      wire = attachTransport(executor);
-            auto       plan = makeFakePlan(params, decode);
+            PPExecutor executor(
+                params, nullptr, false, nullptr, nullptr, type == SP_TYPE_NONE ? nullptr : propose.get());
+            auto* wire = attachTransport(executor);
+            auto  plan = makeFakePlan(params, decode);
             enqueuePlan(*wire, plan);
             auto* recorded     = installModel<RecordingDraftModel>(executor);
             auto* draft_inputs = installDraftModel(executor, type, 3);
@@ -5478,17 +5471,19 @@ TEST_F(PPExecutorTest, LastVerifyIgnoresSamplerFailuresAfterTheRejectedPrefix) {
 TEST_F(PPExecutorTest, LastDraftForwardUsesDraftCacheStrides) {
     for (bool multiple_groups : {false, true}) {
         SCOPED_TRACE(multiple_groups);
-        auto       params       = makeStageParams(2, SP_TYPE_MTP, 1);
-        auto       cache_config = test::makeSimpleMhaCacheConfig(1, 16, 4, DataType::TYPE_FP16);
-        const auto draft_config = cache_config;
+        auto params       = makeStageParams(2, SP_TYPE_MTP, 1);
+        auto cache_config = test::makeSimpleMhaCacheConfig(1, 16, 4, DataType::TYPE_FP16);
+        auto draft_config = test::makeSimpleMhaCacheConfig(1, 16, 4, DataType::TYPE_FP16);
+        draft_config.fromGroupedSpecs(
+            {test::makeMhaSpec("mtp_default", 4, TYPE_FP16, 1, 1)}, {{0}}, {CacheGroupType::FULL});
         if (multiple_groups) {
-            cache_config.layer_num = 2;
+            cache_config.main_config.layer_num = 2;
             cache_config.fromGroupedSpecs(
                 {test::makeMhaSpec("default", 4, TYPE_FP16, 1, 1), test::makeMhaSpec("extra", 4, TYPE_FP16, 1, 1)},
                 {{0}, {1}},
                 {CacheGroupType::FULL, CacheGroupType::FULL});
         }
-        cache_config.mtp_sub_configs.push_back(cache_config.mergeMTPModule(draft_config, 0, cache_config.layer_num));
+        cache_config.mtp_sub_configs.push_back(draft_config.main_config);
         cache_config.finalizeBlockNums(16, RuntimeConfig{});
         auto cache = std::make_shared<KVCacheManager>(cache_config);
         ASSERT_TRUE(cache->init());
@@ -5500,7 +5495,7 @@ TEST_F(PPExecutorTest, LastDraftForwardUsesDraftCacheStrides) {
         auto plan                              = makePlan(params);
         plan.model_input.kv_block_stride_bytes = 17;
         plan.model_input.kv_scale_stride_bytes = 19;
-        const auto        hidden = torch::zeros({5, 4}, torch::TensorOptions(torch::kFloat32).device(torch::kCUDA));
+        const auto       hidden = torch::zeros({5, 4}, torch::TensorOptions(torch::kFloat32).device(torch::kCUDA));
         PPSamplingOutput sampling;
         sampling.sampler_output.token_ids = intTensor({7, 8}).reshape({2, 1});
         GptModelOutputs target_output;
@@ -5508,16 +5503,9 @@ TEST_F(PPExecutorTest, LastDraftForwardUsesDraftCacheStrides) {
         executor.runDraftStep(plan, target_output, sampling);
         ASSERT_EQ(recorded->inputs.size(), 1u);
         const auto& expected = cache->getMTPModuleCacheConfig(0);
-        ASSERT_EQ(expected.groupNums(), multiple_groups ? 2 : 1);
-        if (multiple_groups) {
-            /** Multiple cache groups require group-specific strides, including groups without local draft layers. */
-            EXPECT_TRUE(expected.layerIdsForGroup("extra").empty());
-            EXPECT_EQ(recorded->inputs[0].kv_block_stride_bytes, 0u);
-            EXPECT_EQ(recorded->inputs[0].kv_scale_stride_bytes, 0u);
-        } else {
-            EXPECT_EQ(recorded->inputs[0].kv_block_stride_bytes, expected.group("default").kvBlockStrideBytes());
-            EXPECT_EQ(recorded->inputs[0].kv_scale_stride_bytes, expected.group("default").kvScaleStrideBytes());
-        }
+        ASSERT_EQ(expected.groupNums(), 1);
+        EXPECT_EQ(recorded->inputs[0].kv_block_stride_bytes, expected.group("mtp_default").kvBlockStrideBytes());
+        EXPECT_EQ(recorded->inputs[0].kv_scale_stride_bytes, expected.group("mtp_default").kvScaleStrideBytes());
         EXPECT_EQ(plan.model_input.kv_block_stride_bytes, 17);
         EXPECT_EQ(plan.model_input.kv_scale_stride_bytes, 19);
     }
@@ -5551,13 +5539,13 @@ TEST_F(PPExecutorTest, LastDraftChainUsesTargetAndPreviousDraftHidden) {
         executor.position_id_len_factor_   = 1;
 
         PPExecutionPlan plan;
-        plan.model_input = target_input;
+        plan.model_input             = target_input;
         plan.draft_next_position_ids = intTensor({5, 8});
         PPSamplingOutput sampling;
         sampling.sampler_output.token_ids = intTensor({1, 2, 4, 5}).reshape({2, 2}).cuda();
         GptModelOutputs target_output;
         target_output.all_hidden_states = target_hidden;
-        const auto draft_output = executor.runDraftStep(plan, target_output, sampling);
+        const auto draft_output         = executor.runDraftStep(plan, target_output, sampling);
         EXPECT_TRUE(draft_output.proposals.token_ids.is_cuda());
         const auto proposed = draft_output.proposals.token_ids.cpu();
         ASSERT_EQ(recorded->inputs.size(), 3u);
@@ -5631,7 +5619,7 @@ TEST_F(PPExecutorTpTest, LastDraftDecodeSynchronizesOnlyItsInitialInput) {
                                              .reshape({5, 4})
                                              .narrow(1, 0, hidden_width);
                     PPExecutionPlan plan;
-                    plan.model_input = input;
+                    plan.model_input             = input;
                     plan.draft_next_position_ids = intTensor({5, 105, 8, 108});
                     PPSamplingOutput sampling;
                     if (rank == 0) {
@@ -5639,7 +5627,7 @@ TEST_F(PPExecutorTpTest, LastDraftDecodeSynchronizesOnlyItsInitialInput) {
                     }
                     GptModelOutputs target_output;
                     target_output.all_hidden_states = target_hidden;
-                    const auto result = executor.runDraftStep(plan, target_output, sampling);
+                    const auto result               = executor.runDraftStep(plan, target_output, sampling);
 
                     ASSERT_EQ(recorded->inputs.size(), static_cast<size_t>(width));
                     ASSERT_EQ(forward_positions.size(), static_cast<size_t>(width));
@@ -5738,7 +5726,7 @@ TEST_F(PPExecutorTpTest, LastTpVerifySynchronizesAcceptedRowsAndKeepsPeersOutOfT
                 auto                target          = std::make_unique<RecordingCPTargetModel>(false, rank);
                 auto*               recorded_target = target.get();
                 target->next_tokens                 = {11, 40, 13, 14, 21, 22, 23, 24};
-                target->on_forward = [&] {
+                target->on_forward                  = [&] {
                     EXPECT_EQ(broadcasts.position(), 0u);
                     forward_positions.push_back(broadcasts.position());
                 };

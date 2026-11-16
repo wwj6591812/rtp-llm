@@ -91,7 +91,7 @@ PPBatchStreamProcessor::PPBatchStreamProcessor(const ModelConfig&               
                                                const CacheConfig&                 cache_config,
                                                const SpeculativeExecutionConfig&  sp_config,
                                                bool                               warm_up):
-    NormalBatchStreamProcessor(model_config, pd_sep_config, profiling_debug_logging_config, cache_config, warm_up),
+    NormalBatchStreamProcessor(model_config, pd_sep_config, profiling_debug_logging_config, cache_config, 0, warm_up),
     sp_enabled_(sp_config.type != SP_TYPE_NONE),
     is_dspark_(sp_config.type == SP_TYPE_DSPARK),
     propose_step_(sp_config.gen_num_per_cycle),
@@ -365,7 +365,7 @@ PPBatchStreamProcessor::prepareLogitsProcessorsAsync(const PPSamplingPlan& sampl
                             stream_count);
 
     std::vector<GrammarKeyCpp> keys;
-    const auto*               request_ids = sampling_plan.request_ids.data_ptr<int64_t>();
+    const auto*                request_ids = sampling_plan.request_ids.data_ptr<int64_t>();
     for (int64_t stream_idx = 0; stream_idx < stream_count; ++stream_idx) {
         const auto& config = sampling_plan.logits_processor_configs[stream_idx];
         if (config.grammar_type.empty()) {
@@ -384,14 +384,14 @@ PPBatchStreamProcessor::prepareLogitsProcessorsAsync(const PPSamplingPlan& sampl
     return LogitsProcessorFactory::prefetchGrammars(keys);
 }
 
-void PPBatchStreamProcessor::prepareSampling(const PPExecutionPlan&                              plan,
-                                             std::unordered_map<RequestId, torch::Tensor>&       dspark_q,
-                                             const torch::Tensor&                                d2t_map,
-                                             SamplingStates&                                     sampling_states,
-                                             std::vector<ErrorInfo>&                              request_errors,
-                                             SamplerOutput&                                      draft_sampler_output,
-                                             speculative::SpeculativeSamplingParams&             verify_params,
-                                             GrammarPrefetchContext*                             grammar_prefetch) {
+void PPBatchStreamProcessor::prepareSampling(const PPExecutionPlan&                        plan,
+                                             std::unordered_map<RequestId, torch::Tensor>& dspark_q,
+                                             const torch::Tensor&                          d2t_map,
+                                             SamplingStates&                               sampling_states,
+                                             std::vector<ErrorInfo>&                       request_errors,
+                                             SamplerOutput&                                draft_sampler_output,
+                                             speculative::SpeculativeSamplingParams&       verify_params,
+                                             GrammarPrefetchContext*                       grammar_prefetch) {
     const auto& sampling_plan = plan.sampling_plan;
     const auto  stream_count  = sampling_plan.request_ids.size(0);
     const auto* request_ids   = sampling_plan.request_ids.data_ptr<RequestId>();
@@ -791,7 +791,7 @@ void PPBatchStreamProcessor::fillExecutionResult(const PPExecutionPlan&  plan,
                                                  const GptModelOutputs&  model_output,
                                                  const PPSamplingOutput& sampling_output,
                                                  const PPDraftOutput&    draft_output,
-                                                 PPExecutionResult&     result) const {
+                                                 PPExecutionResult&      result) const {
     RTP_LLM_PROFILE_SCOPE("executor.pp.fill_result");
     result.request_ids    = plan.sampling_plan.request_ids.to(torch::kCPU).contiguous();
     result.request_errors = sampling_output.request_errors;
@@ -808,10 +808,10 @@ void PPBatchStreamProcessor::fillExecutionResult(const PPExecutionPlan&  plan,
     if (is_spec_decode) {
         /** Real verify has pending CPU copies; skipped sampling supplies CPU placeholders. */
         const auto& verify_output = sampling_output.verify_output;
-        result.new_token_ids     = skip_sampling ? verify_output.accept_tokens : verify_output.accept_tokens_cpu;
-        result.new_token_lengths = skip_sampling ? verify_output.accept_len : verify_output.accept_len_cpu;
+        result.new_token_ids      = skip_sampling ? verify_output.accept_tokens : verify_output.accept_tokens_cpu;
+        result.new_token_lengths  = skip_sampling ? verify_output.accept_len : verify_output.accept_len_cpu;
     } else {
-        const auto& token_ids     = sampler_output.token_ids;
+        const auto& token_ids    = sampler_output.token_ids;
         result.new_token_ids     = copyToPinnedCpuAsync(token_ids.narrow(1, token_ids.size(1) - 1, 1));
         result.new_token_lengths = torch::ones({token_ids.size(0)}, torch::kInt32);
     }
@@ -840,7 +840,7 @@ void PPBatchStreamProcessor::fillExecutionResult(const PPExecutionPlan&  plan,
     }
 
     if (is_spec_decode) {
-        result.new_token_ids = result.new_token_ids.contiguous();
+        result.new_token_ids          = result.new_token_ids.contiguous();
         const auto total_batch_size   = plan.sampling_plan.sequence_lengths.numel();
         const auto verify_token_count = result.new_token_ids.size(1);
         /** Only sampler failures within the accepted prefix fail the request. */
@@ -861,9 +861,8 @@ void PPBatchStreamProcessor::fillExecutionResult(const PPExecutionPlan&  plan,
             }
             const auto compact_id = tokens[index];
             if (compact_id < 0 || static_cast<size_t>(compact_id) >= output_vocab_ids_.size()) {
-                RTP_LLM_LOG_ERROR("PP pruned sampling returned compact id %d outside [0, %zu)",
-                                  compact_id,
-                                  output_vocab_ids_.size());
+                RTP_LLM_LOG_ERROR(
+                    "PP pruned sampling returned compact id %d outside [0, %zu)", compact_id, output_vocab_ids_.size());
                 success[index] = false;
                 continue;
             }
@@ -1088,8 +1087,8 @@ mtp::DSparkRoundState PPBatchStreamProcessor::buildDSparkRoundState(const PPExec
         }
     } else {
         const auto& sampled_tokens = sampling_output.sampler_output.token_ids;
-        auto        input_lengths = target_input.input_lengths.to(torch::kCPU).to(torch::kInt32).contiguous();
-        round_state.anchors = sampled_tokens.select(1, sampled_tokens.size(1) - 1).cpu().contiguous();
+        auto        input_lengths  = target_input.input_lengths.to(torch::kCPU).to(torch::kInt32).contiguous();
+        round_state.anchors        = sampled_tokens.select(1, sampled_tokens.size(1) - 1).cpu().contiguous();
         round_state.committed_ends = prefix_lengths + input_lengths;
         if (plan.draft_next_position_ids.defined()) {
             /** The plan captured the prompt's last position before target sampling appended the anchor. */
