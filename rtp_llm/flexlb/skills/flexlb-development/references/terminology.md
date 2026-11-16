@@ -119,14 +119,14 @@ Endpoint 的两阶段关闭统一使用 `stopAcceptingRequests()` 和 `closeAsyn
 
 ## 状态命名的边界
 
-当前代码中的以下状态不是同一套枚举：
+以下状态维度含义不同；类型名和实现形式以目标分支的实际代码为准，不要求每个维度新建枚举：
 
 - `RequestPhase.ENCODER / GENERATION`：业务阶段。
 - `RequestContext.Phase.OPEN / ENDING / CLOSED`：请求生命周期。
-- `RoutingPhase`：选址和移除旧路由的处理阶段。
-- `RouteState`：没有路由、可执行路由、仅为清理保留的路由。
-- 路由提交后直接完成调度响应，不另设 `SendState` 或发送完成回报。
-- `PreemptionCancelPhase`：抢占取消协议的进度。
+- 选址进度：是否正在选址，或是否正在移除旧路由；可由当前选址编号和已有事实推导。
+- 路由用途：尚无路由、可执行路由、仅为清理保留的路由；不等同于请求结果。
+- 交付进度：只在实际存在异步交付协议时表达；路由提交后直接完成调度响应的流程不另设发送状态。
+- 取消进度：区分取消已发出和远端释放已确认；没有独立抢占取消协议时，不另建同义状态机。
 
 `OPEN` 不表示 worker 正在运行；`ENDING` 不表示资源已经全部释放；Future 已完成也不表示
 请求可以归档。P/D 分离时，Prefill 完成不能直接解释为整个请求完成。
@@ -178,8 +178,6 @@ Endpoint 的两阶段关闭统一使用 `stopAcceptingRequests()` 和 `closeAsyn
 4. 同义概念是否出现多套命名，或同一个词是否被用于不同事实？
 5. 旧名清理是否覆盖当前改动的调用方和测试，并保留必要的外部兼容？
 
-实现入口可从 [调度目录](../../../flexlb-balance/src/main/java/org/flexlb/balance/request)、
-[抢占目录](../../../flexlb-balance/src/main/java/org/flexlb/balance/request)、
-[资源目录](../../../flexlb-balance/src/main/java/org/flexlb/worker/endpoint) 查找；
+调度、抢占和资源管理入口按目标分支的实际源码定位，不以其他分支的包路径推断职责。
 跨组件行为参见 [现有架构说明](../../../docs/architecture/00-overview.md)，与代码不一致时核对实现及测试，
 不要沿用过期类图或术语。
