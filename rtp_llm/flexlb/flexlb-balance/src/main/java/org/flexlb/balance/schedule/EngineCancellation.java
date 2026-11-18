@@ -25,6 +25,7 @@ public final class EngineCancellation {
     private static final ThreadLocal<Boolean> executingStop = new ThreadLocal<>();
 
     private final EngineGrpcClient grpcClient;
+    private volatile boolean stopping;
     private final java.util.concurrent.Executor stopWorkers =
             task -> Thread.ofVirtual().name("delivery-stop-work").start(task);
     // MapMaker weak keys use identity: equal-valued claims must not share an operation.
@@ -38,6 +39,7 @@ public final class EngineCancellation {
     }
 
     public void awaitStops() {
+        stopping = true;
         Throwable problem = null;
         long deadline =
                 System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(CLEANUP_TIMEOUT_MS + 1_000L);
@@ -65,6 +67,16 @@ public final class EngineCancellation {
             }
         }
         Failures.rethrow(problem, "delivery stop callbacks did not drain");
+    }
+
+    /**
+     * Resumes unresolved cleanup in bounded rounds without dropping its exact route.
+     */
+    @org.springframework.scheduling.annotation.Scheduled(fixedDelay = 1000L)
+    public void retryUnresolvedStops() {
+        if (stopping) return;
+        long now = System.nanoTime();
+        for (var task : activeStops) task.retryIfDue(now);
     }
 
     boolean isStoppingOnCurrentThread() {
@@ -149,6 +161,7 @@ public final class EngineCancellation {
 
         private int attempts;
         private long deadline, rpcDeadline;
+        private long retryAfterNanos;
 
         StopTask(
                 RequestRoute claim,
@@ -179,8 +192,25 @@ public final class EngineCancellation {
                     executingStop.remove();
                     runner = null;
                     taskScheduled = false;
+                    retryAfterNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
                     notifyProgress();
                 }
+            }
+        }
+
+        private void retryIfDue(long nowNanos) {
+            synchronized (this) {
+                if (stopping
+                        || closed
+                        || taskScheduled
+                        || pending != 0
+                        || !stopRequested
+                        || !finished.isDone()
+                        || nowNanos - retryAfterNanos < 0) return;
+                deadline = 0;
+                attempts = 0;
+                rpc = null;
+                start();
             }
         }
 
