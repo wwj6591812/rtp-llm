@@ -57,12 +57,13 @@ public final class SchedulerTestServices {
             SchedulerConfiguration.newTimerExecutor(1, "request-scheduler-expiration-");
     private final TaskTimer deadlineTaskTimer =
             new SchedulerConfiguration().deadlineTaskTimer(deadlineTimerExecutor);
-    final RequestTaskPool tasks = new RequestTaskPool();
+    final java.util.concurrent.ExecutorService tasks = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
     private final ResponseCompletionExecutor responseCompletions;
     private final ExpirationTimer timer;
     private final Object schedulerLock = new Object();
 
     private RequestScheduler scheduler;
+    private AbstractRequestScheduler passiveScheduler;
     private Throwable failure;
 
     SchedulerTestServices(
@@ -201,7 +202,18 @@ public final class SchedulerTestServices {
     }
 
     public Executor tasks() {
-        return tasks;
+        return work -> submitRequestWork(scheduling(), work);
+    }
+
+    public static void submitRequestWork(AbstractRequestScheduler owner, Runnable work) {
+        var lock = org.springframework.test.util.ReflectionTestUtils.getField(owner, "requestWorkLock");
+        synchronized (lock) {
+            int count = (Integer) org.springframework.test.util.ReflectionTestUtils.getField(
+                    owner, "activeRequestWork");
+            org.springframework.test.util.ReflectionTestUtils.setField(owner, "activeRequestWork", count + 1);
+        }
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                owner, "submitRequestWork", work, (java.util.function.Consumer<Throwable>) ignored -> {});
     }
 
     /**
@@ -226,7 +238,7 @@ public final class SchedulerTestServices {
         String field =
                 switch (name) {
                     case "timer" -> "expirationTimer";
-                    case "tasks" -> "taskPool";
+                    case "tasks" -> "requestWork";
                     case "dispatcher" -> "engineCancellation";
                     default -> name;
                 };
@@ -241,20 +253,13 @@ public final class SchedulerTestServices {
         }
     }
 
-    public static void throwIfFailed(RequestTaskPool pool) {
-        synchronized (owners) {
-            for (var owner : owners.keySet()) {
-                if (org.springframework.test.util.ReflectionTestUtils.getField(owner, "taskPool")
-                        == pool) owner.throwIfRequestFailed();
-            }
-        }
-    }
-
     public static void bind(AbstractRequestScheduler owner, SchedulerTestServices runtime) {
         if (org.mockito.Mockito.mockingDetails(owner).isMock()
                 && !org.mockito.Mockito.mockingDetails(owner).isSpy()) {
             org.springframework.test.util.ReflectionTestUtils.setField(
-                    owner, "closeQueue", new RequestCloseQueue());
+                    owner, "requestWorkLock", new Object());
+            org.springframework.test.util.ReflectionTestUtils.setField(
+                    owner, "executingRequestWork", new ThreadLocal<Boolean>());
             org.mockito.Mockito.doCallRealMethod()
                     .when(owner)
                     .recordRequestFailure(org.mockito.ArgumentMatchers.any());
@@ -268,7 +273,7 @@ public final class SchedulerTestServices {
                 var target =
                         AbstractRequestScheduler.class.getDeclaredField(
                                 name.equals("tasks")
-                                        ? "taskPool"
+                                        ? "requestWork"
                                         : name.equals("dispatcher") ? "engineCancellation" : name);
                 target.setAccessible(true);
                 target.set(owner, source.get(runtime));
@@ -331,7 +336,7 @@ public final class SchedulerTestServices {
             throw new IllegalArgumentException("shutdown timeout must not be negative");
         // Reject callbacks before taking the fixture monitor, which shutdown may already hold.
         checkState(
-                !tasks.isExecutingOnCurrentThread()
+                !scheduling().isExecutingRequestWork()
                         && !responseCompletions.isCompletingOnCurrentThread(),
                 "scheduler shutdown cannot wait for its own request work or response callback");
         synchronized (this) {
@@ -380,7 +385,7 @@ public final class SchedulerTestServices {
     public static boolean shutdownScheduling(
             AbstractRequestScheduler scheduling,
             RequestRepository requests,
-            RequestTaskPool tasks,
+            java.util.concurrent.ExecutorService tasks,
             ExpirationTimer timer,
             EngineCancellation dispatcher,
             ResponseCompletionExecutor responses,
@@ -401,15 +406,13 @@ public final class SchedulerTestServices {
         for (var request : requests.snapshotActive()) schedulers.add(request.getRequestScheduler());
         for (var owner : schedulers) failure = Failures.run(failure, owner::stopAndCancelRequests);
         failure = Failures.run(failure, dispatcher::awaitStops);
-        failure = Failures.run(failure, tasks::awaitIdle);
-        for (var owner : schedulers) failure = Failures.run(failure, owner::awaitRequestCleanup);
+        for (var owner : schedulers) failure = Failures.run(failure, owner::awaitRequestWork);
         failure = Failures.run(failure, endpoints::close);
         failure = Failures.run(failure, dispatcher::awaitStops);
         failure = Failures.run(failure, timer::close);
-        failure = Failures.run(failure, tasks::awaitIdle);
+        for (var owner : schedulers) failure = Failures.run(failure, owner::awaitRequestWork);
         for (var owner : schedulers) failure = Failures.run(failure, owner::finishRequestCleanup);
-        for (var owner : schedulers) failure = Failures.run(failure, owner::awaitRequestCleanup);
-        failure = Failures.run(failure, tasks::awaitIdle);
+        for (var owner : schedulers) failure = Failures.run(failure, owner::awaitRequestWork);
         failure = Failures.run(failure, dispatcher::awaitStops);
         failure = Failures.run(failure, tasks::close);
         failure = Failures.run(failure, responses::close);
@@ -463,7 +466,7 @@ public final class SchedulerTestServices {
                 router,
                 preemption,
                 dependencies.repository,
-                dependencies.taskPool,
+                dependencies.requestWork,
                 dependency(dependencies, "expirationTimer"),
                 dependency(dependencies, "engineCancellation"),
                 dependency(dependencies, "responseCompletions"),
@@ -482,7 +485,7 @@ public final class SchedulerTestServices {
             var found = owners.get(owner);
             if (found != null) return found;
             for (var entry : owners.entrySet()) {
-                if (owner.taskPool != null && owner.taskPool == entry.getKey().taskPool) {
+                if (owner.requestWork != null && owner.requestWork == entry.getKey().requestWork) {
                     found = entry.getValue();
                     break;
                 }
@@ -501,7 +504,7 @@ public final class SchedulerTestServices {
         return new DirectRequestScheduler(
                 router,
                 dependencies.repository,
-                dependencies.taskPool,
+                dependencies.requestWork,
                 dependency(dependencies, "expirationTimer"),
                 dependency(dependencies, "engineCancellation"),
                 dependency(dependencies, "responseCompletions"),
@@ -514,7 +517,7 @@ public final class SchedulerTestServices {
         return new Object[] {
             router,
             d.repository,
-            d.taskPool,
+            d.requestWork,
             dependency(d, "expirationTimer"),
             dependency(d, "engineCancellation"),
             dependency(d, "responseCompletions"),
@@ -535,7 +538,7 @@ public final class SchedulerTestServices {
             router,
             preemption,
             d.repository,
-            d.taskPool,
+            d.requestWork,
             dependency(d, "expirationTimer"),
             dependency(d, "engineCancellation"),
             dependency(d, "responseCompletions"),
@@ -621,23 +624,17 @@ public final class SchedulerTestServices {
     }
 
     AbstractRequestScheduler scheduling() {
-        AbstractRequestScheduler owner;
         synchronized (schedulerLock) {
-            owner =
-                    scheduler == null
-                            ? new PassiveScheduler(
-                                    requests,
-                                    tasks,
-                                    timer,
-                                    dispatcher,
-                                    responseCompletions,
-                                    deliveryReporter,
-                                    org.mockito.Mockito.mock(
-                                            org.flexlb.balance.requestlog.TheoryCacheHitReporter
-                                                    .class))
-                            : lifecycle(scheduler);
+            if (scheduler != null) return lifecycle(scheduler);
+            if (passiveScheduler == null) {
+                passiveScheduler = new PassiveScheduler(
+                        requests, tasks, timer, dispatcher, responseCompletions, deliveryReporter,
+                        org.mockito.Mockito.mock(
+                                org.flexlb.balance.requestlog.TheoryCacheHitReporter.class));
+                owners.put(passiveScheduler, this);
+            }
+            return passiveScheduler;
         }
-        return owner;
     }
 
     void closeTimers() {
@@ -701,7 +698,7 @@ public final class SchedulerTestServices {
     public static class PassiveScheduler extends AbstractRequestScheduler {
         public PassiveScheduler(
                 RequestRepository requests,
-                RequestTaskPool tasks,
+                java.util.concurrent.ExecutorService tasks,
                 ExpirationTimer deadlines,
                 EngineCancellation dispatcher,
                 ResponseCompletionExecutor responses,

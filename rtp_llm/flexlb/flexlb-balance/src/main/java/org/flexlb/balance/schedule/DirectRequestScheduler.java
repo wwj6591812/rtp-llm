@@ -10,12 +10,22 @@ import org.flexlb.worker.endpoint.CapacityKey;
 import org.flexlb.worker.endpoint.StrategyErrorType;
 
 import java.util.Objects;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
- * Accepts DIRECT requests and completes one immediate endpoint selection and handoff.
+ * Accepts DIRECT requests and runs endpoint selection and handoff on a bounded number of
+ * per-request virtual threads. Pending requests stay with the scheduler until a slot opens.
  */
 public class DirectRequestScheduler extends AbstractRequestScheduler {
+    private static final int MAX_SELECTIONS =
+            Math.clamp(Runtime.getRuntime().availableProcessors(), 2, 8);
+
     private final RequestRouteSelector router;
+    private final ExecutorService selections =
+            Executors.newThreadPerTaskExecutor(
+                    Thread.ofVirtual().name("flexlb-direct-", 1).factory());
+    private final ThreadLocal<Boolean> selecting = new ThreadLocal<>();
     private final java.util.concurrent.ConcurrentLinkedQueue<RequestContext> pending =
             new java.util.concurrent.ConcurrentLinkedQueue<>();
     private final java.util.concurrent.atomic.AtomicInteger acceptedWork =
@@ -30,7 +40,7 @@ public class DirectRequestScheduler extends AbstractRequestScheduler {
     protected DirectRequestScheduler(
             RequestRouteSelector router,
             RequestRepository requests,
-            RequestTaskPool tasks,
+            ExecutorService requestWork,
             ExpirationTimer deadlines,
             EngineCancellation engineCancellation,
             ResponseCompletionExecutor responseCompletions,
@@ -38,7 +48,7 @@ public class DirectRequestScheduler extends AbstractRequestScheduler {
             TheoryCacheHitReporter cacheTrace) {
         super(
                 requests,
-                tasks,
+                requestWork,
                 deadlines,
                 engineCancellation,
                 responseCompletions,
@@ -59,6 +69,7 @@ public class DirectRequestScheduler extends AbstractRequestScheduler {
         stop();
         com.google.common.base.Preconditions.checkState(
                 awaitStopped(Long.MAX_VALUE), "scheduler cannot wait for its own work");
+        selections.close();
     }
 
     @Override
@@ -69,8 +80,11 @@ public class DirectRequestScheduler extends AbstractRequestScheduler {
 
     @Override
     public boolean awaitStopped(long deadlineNanos) {
-        if (acceptedWork.get() != 0 && taskPool.isExecutingOnCurrentThread()) return false;
-        while (scheduling.get() || acceptedWork.get() != 0) {
+        if (Boolean.TRUE.equals(selecting.get())
+                || acceptedWork.get() != 0 && isExecutingRequestWork()) return false;
+        while (scheduling.get()
+                || acceptedWork.get() != 0
+                || started && !stopped && !pending.isEmpty()) {
             if (deadlineNanos != Long.MAX_VALUE && System.nanoTime() >= deadlineNanos) return false;
             java.util.concurrent.locks.LockSupport.parkNanos(100_000L);
         }
@@ -93,6 +107,11 @@ public class DirectRequestScheduler extends AbstractRequestScheduler {
             RequestContext context,
             java.util.function.Supplier<SelectionResult<RequestRoute, CapacityKey>> selection) {
         return planRoute(context, selection);
+    }
+
+    @Override
+    protected boolean isExecutingRequestWork() {
+        return Boolean.TRUE.equals(selecting.get()) || super.isExecutingRequestWork();
     }
 
     @Override
@@ -124,29 +143,42 @@ public class DirectRequestScheduler extends AbstractRequestScheduler {
             if (stopped || !scheduling.compareAndSet(false, true)) return;
             try {
                 RequestContext request;
-                while (!stopped && (request = pending.poll()) != null) {
+                while (!stopped
+                        && acceptedWork.get() < MAX_SELECTIONS
+                        && (request = pending.poll()) != null) {
                     submitSelection(request);
                 }
             } finally {
                 scheduling.set(false);
             }
-        } while (started && !pending.isEmpty());
+        } while (started && acceptedWork.get() < MAX_SELECTIONS && !pending.isEmpty());
     }
 
     private void submitSelection(RequestContext request) {
         acceptedWork.incrementAndGet();
         try {
-            taskPool.execute(
+            selections.execute(
                     () -> {
+                        selecting.set(true);
                         try {
                             dispatchRegistered(request);
+                        } catch (RuntimeException | Error failure) {
+                            recordRequestFailure(failure);
+                            throw failure;
                         } finally {
                             acceptedWork.decrementAndGet();
+                            try {
+                                drainPendingRequests();
+                            } finally {
+                                selecting.remove();
+                            }
                         }
                     });
         } catch (RuntimeException | Error failure) {
             acceptedWork.decrementAndGet();
-            throw failure;
+            recordRequestFailure(failure);
+            publishResponse(request, Response.error(StrategyErrorType.DISPATCH_FAILED), false);
+            if (failure instanceof Error fatal) throw fatal;
         }
     }
 
@@ -183,9 +215,6 @@ public class DirectRequestScheduler extends AbstractRequestScheduler {
                                     + ": "
                                     + problem.getMessage());
             Logger.warn("DIRECT admission failed: request_id={}", context.getRequestId(), problem);
-        } catch (Error fatal) {
-            recordRequestFailure(fatal);
-            throw fatal;
         } finally {
             if (failure != null) publishResponse(context, failure, false);
         }

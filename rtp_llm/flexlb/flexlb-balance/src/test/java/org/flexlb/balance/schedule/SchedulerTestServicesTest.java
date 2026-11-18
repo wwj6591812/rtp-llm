@@ -70,9 +70,8 @@ class SchedulerTestServicesTest {
 
     @Test
     @org.junit.jupiter.api.Timeout(15)
-    void deferredCloseCannotBlockItsRequestWorkSource() throws Exception {
+    void deferredWorkCannotBlockItsRequestWorkSource() throws Exception {
         try (var f = new Fixture()) {
-            var context = RequestProtocolTestSupport.context(f.config, 9111L);
             var entered = new java.util.concurrent.CountDownLatch(1);
             var release = new java.util.concurrent.CountDownLatch(1);
             var sourceReturned = new java.util.concurrent.CompletableFuture<Void>();
@@ -81,18 +80,13 @@ class SchedulerTestServicesTest {
                         .tasks()
                         .execute(
                                 () -> {
-                                    {
-                                        SchedulerTestSupport.submitClose(
-                                                f.runtime.tasks,
-                                                context,
-                                                () -> {
-                                                    entered.countDown();
-                                                    RequestProtocolTestSupport.await(release);
-                                                },
-                                                false,
-                                                null,
-                                                false);
-                                    }
+                                    f.runtime
+                                            .tasks()
+                                            .execute(
+                                                    () -> {
+                                                        entered.countDown();
+                                                        RequestProtocolTestSupport.await(release);
+                                                    });
                                     sourceReturned.complete(null);
                                 });
                 assertTrue(entered.await(2, java.util.concurrent.TimeUnit.SECONDS));
@@ -107,14 +101,13 @@ class SchedulerTestServicesTest {
     @Test
     void executorErrorTransfersWorkOnceAndDoesNotLeakItsDrainOwner() throws Exception {
         var f = new Fixture();
-        var workers = SchedulerTestSupport.requestWorkers(f.runtime);
+        var workers = f.runtime.tasks;
         var rejected = mock(java.util.concurrent.ExecutorService.class);
         var error = new AssertionError("executor failed before accepting work");
         doThrow(error).when(rejected).execute(any(Runnable.class));
         var executions = new java.util.concurrent.atomic.AtomicInteger();
         try {
-            org.springframework.test.util.ReflectionTestUtils.setField(
-                    f.runtime.tasks(), "requestWorkers", rejected);
+            SchedulerTestServices.setDependency(f.runtime, "tasks", rejected);
             assertThrows(
                     AssertionError.class,
                     () ->
@@ -129,8 +122,7 @@ class SchedulerTestServicesTest {
                     () -> SchedulerTestSupport.awaitRequestWork(f.runtime));
             assertEquals(0, executions.get());
         } finally {
-            org.springframework.test.util.ReflectionTestUtils.setField(
-                    f.runtime.tasks(), "requestWorkers", workers);
+            SchedulerTestServices.setDependency(f.runtime, "tasks", workers);
             assertDoesNotThrow(
                     () -> f.runtime.shutdown(ShutdownMode.IMMEDIATE, java.time.Duration.ZERO));
         }

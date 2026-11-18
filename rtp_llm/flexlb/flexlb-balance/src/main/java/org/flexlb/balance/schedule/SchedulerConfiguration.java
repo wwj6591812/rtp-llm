@@ -23,6 +23,9 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.context.annotation.Primary;
 
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
 /**
  * Assembles the scheduler, Prefill delivery, and Decode preemption from startup config.
  */
@@ -37,8 +40,9 @@ public class SchedulerConfiguration {
 
     @Lazy
     @Bean(destroyMethod = "")
-    public RequestTaskPool requestTasks() {
-        return new RequestTaskPool();
+    public ExecutorService requestWorkExecutor() {
+        return Executors.newThreadPerTaskExecutor(
+                Thread.ofVirtual().name("flexlb-request-cleanup-", 1).factory());
     }
 
     @Lazy
@@ -145,7 +149,7 @@ public class SchedulerConfiguration {
             @Lazy RequestPreemption preemption,
             CapacityNotifier availability,
             RequestRepository requests,
-            RequestTaskPool tasks,
+            @Qualifier("requestWorkExecutor") ExecutorService requestWork,
             ExpirationTimer deadlines,
             EngineCancellation engineCancellation,
             ResponseCompletionExecutor responseCompletions,
@@ -160,7 +164,7 @@ public class SchedulerConfiguration {
                     router,
                     preemption,
                     requests,
-                    tasks,
+                    requestWork,
                     deadlines,
                     engineCancellation,
                     responseCompletions,
@@ -172,7 +176,7 @@ public class SchedulerConfiguration {
         return new DirectRequestScheduler(
                 router,
                 requests,
-                tasks,
+                requestWork,
                 deadlines,
                 engineCancellation,
                 responseCompletions,

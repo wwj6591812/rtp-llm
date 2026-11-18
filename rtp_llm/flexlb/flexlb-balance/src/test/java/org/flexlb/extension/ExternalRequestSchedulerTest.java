@@ -11,7 +11,6 @@ import org.flexlb.balance.schedule.EngineCancellation;
 import org.flexlb.balance.schedule.ExpirationTimer;
 import org.flexlb.balance.schedule.RequestContext;
 import org.flexlb.balance.schedule.RequestRepository;
-import org.flexlb.balance.schedule.RequestTaskPool;
 import org.flexlb.balance.schedule.ResponseCompletionExecutor;
 import org.flexlb.balance.schedule.SchedulerConfiguration;
 import org.flexlb.balance.schedule.SchedulingMetadata;
@@ -208,7 +207,7 @@ class ExternalRequestSchedulerTest {
         final org.flexlb.config.FlexlbConfig config = SchedulingTestConfig.newConfig();
         final SchedulerConfiguration assembly = new SchedulerConfiguration();
         final RequestRepository requests = new RequestRepository();
-        final RequestTaskPool tasks = assembly.requestTasks();
+        final java.util.concurrent.ExecutorService tasks = assembly.requestWorkExecutor();
         final java.util.concurrent.ScheduledThreadPoolExecutor deadlinePool =
                 assembly.deadlineTimerExecutor();
         final TaskTimer deadlineTimer = assembly.deadlineTaskTimer(deadlinePool);

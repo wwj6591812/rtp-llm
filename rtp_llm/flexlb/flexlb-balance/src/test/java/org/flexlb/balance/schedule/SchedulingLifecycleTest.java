@@ -18,7 +18,7 @@ class SchedulingLifecycleTest {
     @Test
     void localShutdownCancelsOnlyItsRequestsAndLeavesSharedResourcesOpen() {
         var requests = org.mockito.Mockito.mock(RequestRepository.class);
-        var tasks = org.mockito.Mockito.mock(RequestTaskPool.class);
+        var tasks = org.mockito.Mockito.mock(java.util.concurrent.ExecutorService.class);
         var timer = org.mockito.Mockito.mock(ExpirationTimer.class);
         var dispatcher = org.mockito.Mockito.mock(EngineCancellation.class);
         var responses = org.mockito.Mockito.mock(ResponseCompletionExecutor.class);

@@ -34,8 +34,6 @@ public final class SchedulerTestSupport {
             new WeakHashMap<>();
     private static final Map<PrefillEndpoint, RequestRepository> endpointRepositories =
             java.util.Collections.synchronizedMap(new WeakHashMap<>());
-    private static final java.util.Map<RequestContext, RequestCloseQueue> testCloseQueues =
-            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
 
     public static AbstractRequestScheduler createStartedScheduler(
             AbstractRequestScheduler lifecycle,
@@ -135,27 +133,28 @@ public final class SchedulerTestSupport {
     }
 
     public static void awaitRequestWork(SchedulerTestServices runtime) {
-        var tasks = (RequestTaskPool) runtime.tasks();
-        if (!tasks.isExecutingOnCurrentThread()) {
-            tasks.awaitIdle();
-            return;
-        }
-        // Race hooks run inside asynchronous DIRECT work. Drain the other tasks, not this hook.
-        var monitor = ReflectionTestUtils.getField(tasks, "tasksLock");
-        try {
-            var pending = RequestTaskPool.class.getDeclaredField("submittedTasks");
-            pending.setAccessible(true);
+        var owner = runtime.scheduling();
+        if (Boolean.TRUE.equals(
+                ((ThreadLocal<?>) ReflectionTestUtils.getField(owner, "executingRequestWork"))
+                        .get())) {
+            // Race hooks cannot wait for their own request work.
+            var monitor = ReflectionTestUtils.getField(owner, "requestWorkLock");
             long until = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
             while (System.nanoTime() < until) {
                 synchronized (monitor) {
-                    if (pending.getLong(tasks) == 1L) return;
+                    if ((Integer) ReflectionTestUtils.getField(owner, "activeRequestWork") == 1)
+                        return;
                 }
                 java.util.concurrent.locks.LockSupport.parkNanos(1_000_000L);
             }
             throw new AssertionError("other request work did not drain while running a race hook");
-        } catch (ReflectiveOperationException failure) {
-            throw new AssertionError(failure);
         }
+        if (owner instanceof DirectRequestScheduler direct && !direct.isExecutingRequestWork()) {
+            org.junit.jupiter.api.Assertions.assertTrue(
+                    direct.awaitStopped(
+                            System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5)));
+        }
+        owner.awaitRequestWork();
     }
 
     public static java.util.concurrent.ScheduledThreadPoolExecutor cleanupExecutor(
@@ -263,31 +262,6 @@ public final class SchedulerTestSupport {
         }
     }
 
-    static void submitClose(
-            RequestTaskPool pool,
-            RequestContext context,
-            Runnable work,
-            boolean inline,
-            java.util.function.Consumer<Throwable> rejected,
-            boolean requiredResponse) {
-        closeQueue(context)
-                .submit(
-                        context,
-                        work,
-                        inline ? Runnable::run : task -> pool.execute(task),
-                        !requiredResponse,
-                        rejected);
-    }
-
-    static RequestCloseQueue closeQueue(RequestContext context) {
-        var scheduler = context.getRequestScheduler();
-        if (scheduler != null) {
-            var queue = (RequestCloseQueue) ReflectionTestUtils.getField(scheduler, "closeQueue");
-            if (queue != null) return queue;
-        }
-        return testCloseQueues.computeIfAbsent(context, ignored -> new RequestCloseQueue());
-    }
-
     static SelectionResult<RequestRoute, org.flexlb.worker.endpoint.CapacityKey> selectAndPublish(
             AbstractRequestScheduler scheduler,
             RequestContext context,
@@ -325,13 +299,8 @@ public final class SchedulerTestSupport {
     }
 
     static void closeRequestWork(SchedulerTestServices runtime) {
-        ((RequestTaskPool) runtime.tasks()).awaitIdle();
-        ReflectionTestUtils.invokeMethod(runtime.tasks(), "close");
-    }
-
-    static java.util.concurrent.ExecutorService requestWorkers(SchedulerTestServices runtime) {
-        return (java.util.concurrent.ExecutorService)
-                ReflectionTestUtils.getField(runtime.tasks(), "requestWorkers");
+        awaitRequestWork(runtime);
+        runtime.tasks.close();
     }
 
     static ExpirationTimer timer(SchedulerTestServices runtime) {
@@ -340,8 +309,7 @@ public final class SchedulerTestSupport {
 
     static void closeRequestExecutors(SchedulerTestServices runtime) {
         Throwable failure =
-                org.flexlb.util.Failures.run(null, runtime.scheduling()::awaitRequestCleanup);
-        failure = org.flexlb.util.Failures.run(failure, runtime.tasks::awaitIdle);
+                org.flexlb.util.Failures.run(null, runtime.scheduling()::awaitRequestWork);
         failure = org.flexlb.util.Failures.run(failure, runtime.dispatcher::awaitStops);
         failure = org.flexlb.util.Failures.run(failure, runtime.tasks::close);
         failure = org.flexlb.util.Failures.run(failure, responseCompletions(runtime)::close);

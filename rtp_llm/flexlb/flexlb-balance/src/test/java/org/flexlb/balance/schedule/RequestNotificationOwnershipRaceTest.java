@@ -34,12 +34,12 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * A frontend cancel owns its publication; a queued close retains its independently claimed notification.
+ * A frontend cancel owns its publication; cleanup retains its independently claimed notification.
  */
 @Timeout(15)
 class RequestNotificationOwnershipRaceTest {
     @Test
-    void externalCancellationDoesNotReleaseItsQueuedCloseOwner() throws Exception {
+    void externalCancellationPreservesCleanupUntilItCompletes() throws Exception {
         var config = SchedulingTestConfig.newConfig();
         SchedulingTestConfig.useFifoQueue(config);
         var service = mock(ConfigService.class);
@@ -70,7 +70,7 @@ class RequestNotificationOwnershipRaceTest {
                                 assertNotSame(
                                         originalCaller,
                                         Thread.currentThread(),
-                                        "the existing request work lane owns this notification");
+                                        "the cancelling thread owns cleanup");
                                 var state = context.snapshot();
                                 assertEquals(Phase.ENDING, state.phase());
                                 notificationOwner.set(state.endState());
@@ -84,29 +84,10 @@ class RequestNotificationOwnershipRaceTest {
                 .when(timer)
                 .update(eq(context), any());
         org.flexlb.balance.schedule.SchedulerTestServices.setDependency(runtime, "timer", timer);
-        var workStarted = new CountDownLatch(1);
-        var finishWork = new CountDownLatch(1);
-        {
-            SchedulerTestSupport.submitClose(
-                    runtime.tasks,
-                    context,
-                    () -> {
-                        workStarted.countDown();
-                        RequestProtocolTestSupport.await(finishWork);
-                    },
-                    false,
-                    null,
-                    false);
-        }
-        SchedulerTestSupport.startScheduling(owner);
         try {
-            assertTrue(workStarted.await(5, TimeUnit.SECONDS));
             assertNull(context.snapshot().route());
-            assertTrue(
-                    future.cancel(false),
-                    "the frontend cancellation keeps its synchronous Future contract");
-            assertTrue(future.isCancelled());
-            finishWork.countDown();
+            var cancellation =
+                    java.util.concurrent.CompletableFuture.supplyAsync(() -> future.cancel(false));
             assertTrue(notificationStarted.await(5, TimeUnit.SECONDS));
             assertEquals(
                     ResponseKind.CANCELLATION,
@@ -118,14 +99,12 @@ class RequestNotificationOwnershipRaceTest {
                     "an external publisher cannot complete a running close owner");
             assertSame(notificationOwner.get(), context.snapshot().endState());
             assertFalse(context.snapshot().notificationsDone());
-            assertFalse(context.snapshot().notificationsDone());
             assertEquals(1, runtime.requests().liveRequestCount());
             assertSame(context, runtime.requests().findActive("9401"));
-            assertTrue(
-                    publications(runtime) == 0,
-                    "the frontend publisher releases its own registration only");
+
             verify(timer, times(1)).update(eq(context), any());
             finishNotification.countDown();
+            assertTrue(cancellation.get(5, TimeUnit.SECONDS));
             RequestProtocolTestSupport.awaitCondition(
                     () ->
                             context.snapshot().phase() == Phase.CLOSED
@@ -138,11 +117,10 @@ class RequestNotificationOwnershipRaceTest {
             assertTrue(publications(runtime) == 0);
             assertEquals(
                     0L,
-                    ((Number) ReflectionTestUtils.getField(runtime.tasks(), "submittedTasks"))
+                    ((Number) ReflectionTestUtils.getField(owner, "activeRequestWork"))
                             .longValue());
             assertNull(SchedulerTestSupport.failure(owner));
         } finally {
-            finishWork.countDown();
             finishNotification.countDown();
             org.flexlb.balance.schedule.SchedulerTestServices.setDependency(
                     runtime, "timer", originalTimer);

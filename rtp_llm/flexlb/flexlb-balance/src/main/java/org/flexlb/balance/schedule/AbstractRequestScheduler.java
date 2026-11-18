@@ -22,6 +22,8 @@ import org.flexlb.worker.rpc.EngineGrpcClient;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static com.google.common.base.Preconditions.checkState;
 import static org.flexlb.balance.schedule.RequestContext.EndCause;
@@ -35,29 +37,32 @@ import static org.flexlb.util.Failures.recover;
 /**
  * Registers requests and coordinates cancellation, deadlines, responses and resource cleanup.
  * Runs shared route selection, publication and cleanup; subclasses supply waiting and rejection policies.
- * Stops and cleans up its own requests; the application closes shared resources.
+ * Tracks its deadline and cleanup work for shutdown; the application closes the shared executor.
  */
 public abstract class AbstractRequestScheduler implements RequestScheduler {
     protected final RequestRepository repository;
-    protected final RequestTaskPool taskPool;
+    protected final ExecutorService requestWork;
     private final ExpirationTimer expirationTimer;
     private final EngineCancellation engineCancellation;
     private final ResponseCompletionExecutor responseCompletions;
     private final TheoryCacheHitReporter cacheTrace;
-    private final RequestCloseQueue closeQueue = new RequestCloseQueue();
+    private final Object requestWorkLock = new Object();
+    private final ThreadLocal<Boolean> executingRequestWork = new ThreadLocal<>();
+
+    private int activeRequestWork;
 
     private Throwable requestProcessingFailure;
 
     protected AbstractRequestScheduler(
             RequestRepository repository,
-            RequestTaskPool taskPool,
+            ExecutorService requestWork,
             ExpirationTimer deadlines,
             EngineCancellation engineCancellation,
             ResponseCompletionExecutor responseCompletions,
             DeliveryMetricsReporter deliveryReporter,
             TheoryCacheHitReporter cacheTrace) {
         this.repository = Objects.requireNonNull(repository);
-        this.taskPool = Objects.requireNonNull(taskPool);
+        this.requestWork = Objects.requireNonNull(requestWork);
         this.expirationTimer = Objects.requireNonNull(deadlines);
 
         this.engineCancellation = Objects.requireNonNull(engineCancellation);
@@ -276,15 +281,18 @@ public abstract class AbstractRequestScheduler implements RequestScheduler {
         if (after == null) {
             return;
         }
-        taskPool.execute(
+        synchronized (requestWorkLock) {
+            activeRequestWork++;
+        }
+        submitRequestWork(
                 () -> {
-                    var current = ctx.snapshot();
                     if (nowMs < exact.atMs()) {
-                        expirationTimer.update(ctx, current.deadlines());
-                        return;
+                        expirationTimer.update(ctx, ctx.snapshot().deadlines());
+                    } else {
+                        processPendingRequestActions(ctx);
                     }
-                    processPendingRequestActions(ctx);
-                });
+                },
+                this::recordRequestFailure);
     }
 
     /**
@@ -300,8 +308,24 @@ public abstract class AbstractRequestScheduler implements RequestScheduler {
         Failures.rethrow(failure, "scheduler request cancellation failed");
     }
 
-    public final void awaitRequestCleanup() {
-        closeQueue.awaitIdle();
+    /**
+     * Waits for accepted deadline processing and both synchronous and asynchronous cleanup.
+     */
+    public final void awaitRequestWork() {
+        checkState(
+                !Boolean.TRUE.equals(executingRequestWork.get()),
+                "request work cannot wait for itself");
+        boolean interrupted = false;
+        synchronized (requestWorkLock) {
+            while (activeRequestWork != 0) {
+                try {
+                    requestWorkLock.wait();
+                } catch (InterruptedException ignored) {
+                    interrupted = true;
+                }
+            }
+        }
+        if (interrupted) Thread.currentThread().interrupt();
     }
 
     /**
@@ -309,9 +333,8 @@ public abstract class AbstractRequestScheduler implements RequestScheduler {
      */
     public void checkShutdownThread() {
         checkState(
-                !taskPool.isExecutingOnCurrentThread()
+                !isExecutingRequestWork()
                         && !engineCancellation.isStoppingOnCurrentThread()
-                        && !closeQueue.isExecutingOnCurrentThread()
                         && !responseCompletions.isCompletingOnCurrentThread(),
                 "scheduler shutdown cannot wait for its own request work or response callback");
     }
@@ -472,6 +495,10 @@ public abstract class AbstractRequestScheduler implements RequestScheduler {
     protected SelectionResult<RequestRoute, CapacityKey> selectedRouteResult(
             SelectionResult<RequestRoute, CapacityKey> result) {
         return result;
+    }
+
+    protected boolean isExecutingRequestWork() {
+        return Boolean.TRUE.equals(executingRequestWork.get());
     }
 
     protected abstract StrategyErrorType schedulingTimeoutError();
@@ -818,37 +845,45 @@ public abstract class AbstractRequestScheduler implements RequestScheduler {
             queueFailure = Failures.run(queueFailure, () -> ready.publish(false));
             publication = null;
         }
-        var responseOwner = publication;
-        try {
-            closeQueue.submit(
-                    ctx,
+        boolean start;
+        synchronized (requestWorkLock) {
+            start = ctx.requestCleanup(publication);
+            if (start) activeRequestWork++;
+        }
+        if (start) {
+            Runnable cleanup =
                     () -> {
-                        try {
-                            Throwable failure =
-                                    inactivity
-                                            ? Failures.run(null, () -> removeRequest(ctx))
-                                            : null;
-                            failure = Failures.run(failure, () -> cleanupRequest(ctx));
-                            if (responseOwner != null) {
-                                failure = Failures.run(failure, () -> responseOwner.publish(false));
+                        Throwable failure = null;
+                        do {
+                            var cause = ctx.snapshot().endCause();
+                            if (cause != null && cause.isTimeout()) {
+                                failure = Failures.run(failure, () -> removeRequest(ctx));
                             }
-                            Failures.rethrow(failure, "request close failed");
-                        } catch (RuntimeException | Error failure) {
-                            recordRequestFailure(failure);
-                            throw failure;
-                        }
-                    },
-                    !responseBeforeCleanup && !inactivity
-                            ? Runnable::run
-                            : task -> taskPool.execute(task),
-                    responseOwner == null,
-                    failure -> {
-                        recordRequestFailure(failure);
-                        if (responseOwner != null) responseOwner.failIfUnsubmitted(failure);
-                    });
-        } catch (RuntimeException | Error failure) {
-            Failures.append(failure, queueFailure);
-            throw failure;
+                            failure = Failures.run(failure, () -> cleanupRequest(ctx));
+                            var response = ctx.takeCleanupResponse();
+                            if (response != null) {
+                                failure = Failures.run(failure, () -> response.publish(false));
+                            }
+                        } while (!ctx.finishCleanupPass());
+                        if (failure != null) recordRequestFailure(failure);
+                        Failures.rethrow(failure, "request close failed");
+                    };
+            try {
+                if (responseBeforeCleanup || inactivity) {
+                    submitRequestWork(
+                            cleanup,
+                            failure -> {
+                                var response = ctx.rejectCleanup();
+                                recordRequestFailure(failure);
+                                if (response != null) response.failIfUnsubmitted(failure);
+                            });
+                } else {
+                    runRequestWork(cleanup);
+                }
+            } catch (RuntimeException | Error failure) {
+                Failures.append(failure, queueFailure);
+                throw failure;
+            }
         }
         if (queueFailure != null) recordRequestFailure(queueFailure);
         Failures.rethrow(queueFailure, "request queue removal failed");
@@ -959,6 +994,51 @@ public abstract class AbstractRequestScheduler implements RequestScheduler {
             if (failure != null) return failure;
         }
         return null;
+    }
+
+    /**
+     * Transfers already counted request work to the executor, or releases its count on rejection.
+     */
+    private void submitRequestWork(Runnable work, java.util.function.Consumer<Throwable> rejected) {
+        var startedOrRejected = new AtomicBoolean();
+        try {
+            requestWork.execute(
+                    () -> {
+                        if (!startedOrRejected.compareAndSet(false, true)) return;
+                        try {
+                            runRequestWork(work);
+                        } catch (RuntimeException | Error failure) {
+                            Logger.error("Request work failed", failure);
+                        }
+                    });
+        } catch (RuntimeException | Error failure) {
+            if (startedOrRejected.compareAndSet(false, true)) {
+                try {
+                    Failures.run(failure, () -> rejected.accept(failure));
+                } finally {
+                    finishRequestWork();
+                }
+            }
+            throw failure;
+        }
+    }
+
+    private void runRequestWork(Runnable work) {
+        var previous = executingRequestWork.get();
+        executingRequestWork.set(true);
+        try {
+            work.run();
+        } finally {
+            if (previous == null) executingRequestWork.remove();
+            else executingRequestWork.set(previous);
+            finishRequestWork();
+        }
+    }
+
+    private void finishRequestWork() {
+        synchronized (requestWorkLock) {
+            if (--activeRequestWork == 0) requestWorkLock.notifyAll();
+        }
     }
 
     /**

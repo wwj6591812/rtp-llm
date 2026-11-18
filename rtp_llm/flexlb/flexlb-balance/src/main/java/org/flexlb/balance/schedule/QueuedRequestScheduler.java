@@ -63,7 +63,7 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
             RequestRouteSelector router,
             RequestPreemption preemption,
             RequestRepository requests,
-            RequestTaskPool tasks,
+            ExecutorService requestWork,
             ExpirationTimer deadlines,
             EngineCancellation engineCancellation,
             ResponseCompletionExecutor responseCompletions,
@@ -73,7 +73,7 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
             SchedulingQueue queue) {
         super(
                 requests,
-                tasks,
+                requestWork,
                 deadlines,
                 engineCancellation,
                 responseCompletions,

@@ -293,9 +293,7 @@ class RequestPublicationFailureOwnershipTest {
             var prefillRegistration = route.prefillRegistration();
             RequestProtocolTestSupport.bind(
                     f.owner, new RequestProtocolTestSupport.Registered(route, future));
-            var workers =
-                    (java.util.concurrent.ExecutorService)
-                            ReflectionTestUtils.getField(f.runtime.tasks, "requestWorkers");
+            var workers = f.runtime.tasks;
             var dispatch = mock(java.util.concurrent.ExecutorService.class);
             var failure =
                     new java.util.concurrent.RejectedExecutionException("close dispatch rejected");
@@ -325,7 +323,7 @@ class RequestPublicationFailureOwnershipTest {
                             })
                     .when(dispatch)
                     .execute(any(Runnable.class));
-            ReflectionTestUtils.setField(f.runtime.tasks, "requestWorkers", dispatch);
+            SchedulerTestServices.setDependency(f.runtime, "tasks", dispatch);
             try {
                 var end =
                         RequestEndEvent.failure(
@@ -347,44 +345,44 @@ class RequestPublicationFailureOwnershipTest {
                     finish.countDown();
                 } else {
                     assertTrue(future.get(5, TimeUnit.SECONDS).isSuccess());
-                    f.runtime.tasks.awaitIdle();
+                    f.owner.awaitRequestWork();
                     assertEquals(0, registrations(f.runtime));
                     assertEquals(Phase.ENDING, context.snapshot().phase());
                     assertSame(route, context.snapshot().route());
                     assertTrue(f.runtime.requests().isCurrent(context));
                     verify(endpoint, never()).releaseRequest(prefillRegistration);
-                    ReflectionTestUtils.setField(f.runtime.tasks, "requestWorkers", workers);
+                    SchedulerTestServices.setDependency(f.runtime, "tasks", workers);
                     f.owner.closeRequest(context, null);
                 }
                 if (startedBeforeFailure) {
                     assertTrue(future.get(5, TimeUnit.SECONDS).isSuccess());
                 }
-                f.runtime.tasks.awaitIdle();
+                f.owner.awaitRequestWork();
                 RequestProtocolTestSupport.awaitCondition(() -> registrations(f.runtime) == 0);
                 assertEquals(EndCause.WORKER_REPORT_TIMEOUT, context.snapshot().endCause());
                 assertEquals(Phase.ENDING, context.snapshot().phase());
                 verify(endpoint, never()).releaseRequest(prefillRegistration);
-                ReflectionTestUtils.setField(f.runtime.tasks, "requestWorkers", workers);
+                SchedulerTestServices.setDependency(f.runtime, "tasks", workers);
                 f.owner.onEngineCancelReply(
                         route, org.flexlb.worker.rpc.EngineGrpcClient.CancelReply.REQUEST_CLEANED);
-                f.runtime.tasks.awaitIdle();
+                f.owner.awaitRequestWork();
                 assertEquals(Phase.CLOSED, context.snapshot().phase());
                 assertEquals(0, f.runtime.requests().liveRequestCount());
                 verify(endpoint, times(1)).releaseRequest(prefillRegistration);
                 if (startedBeforeFailure) {
                     assertDoesNotThrow(
-                            () -> SchedulerTestServices.throwIfFailed(f.runtime.tasks),
+                            f.owner::throwIfRequestFailed,
                             "the caller's submission exception is not a rejection of an executing task");
                 } else {
                     assertSame(
                             failure,
                             assertThrows(
                                     java.util.concurrent.RejectedExecutionException.class,
-                                    () -> SchedulerTestServices.throwIfFailed(f.runtime.tasks)));
+                                    f.owner::throwIfRequestFailed));
                 }
             } finally {
                 finish.countDown();
-                ReflectionTestUtils.setField(f.runtime.tasks, "requestWorkers", workers);
+                SchedulerTestServices.setDependency(f.runtime, "tasks", workers);
                 SchedulerTestServices.setDependency(f.runtime, "timer", originalTimer);
             }
         }

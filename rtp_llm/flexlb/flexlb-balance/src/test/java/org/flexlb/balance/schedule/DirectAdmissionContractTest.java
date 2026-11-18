@@ -747,7 +747,7 @@ class DirectAdmissionContractTest {
             assertEquals(1, fixture.decode.selectionSnapshot().usage().occupiedRequests());
             fixture.assertNoWaitingQueue();
             org.junit.jupiter.api.Assertions.assertDoesNotThrow(
-                    () -> SchedulerTestServices.throwIfFailed(fixture.requests.taskPool));
+                    () -> fixture.requests.throwIfRequestFailed());
             assertFalse(selectedEndpoint.hasStoppedAcceptingRequests());
         }
     }

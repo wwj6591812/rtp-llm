@@ -4,7 +4,6 @@ import org.flexlb.balance.schedule.AbstractRequestScheduler;
 import org.flexlb.balance.schedule.EngineCancellation;
 import org.flexlb.balance.schedule.ExpirationTimer;
 import org.flexlb.balance.schedule.RequestRepository;
-import org.flexlb.balance.schedule.RequestTaskPool;
 import org.flexlb.balance.schedule.ResponseCompletionExecutor;
 import org.flexlb.balance.schedule.SchedulerTestServices;
 import org.flexlb.worker.endpoint.EndpointRegistry;
@@ -33,7 +32,7 @@ import static org.mockito.Mockito.verify;
 class SchedulingResourceShutdownTest {
     @Test
     void stopsSchedulingBeforeSettlementAndClosesAllExecutorsAfterSettlement() {
-        var f = new Fixture(mock(RequestTaskPool.class));
+        var f = new Fixture(mock(java.util.concurrent.ExecutorService.class));
         f.lifecycle.offline();
         assertTrue(f.requests.isClosed());
         var order =
@@ -46,11 +45,12 @@ class SchedulingResourceShutdownTest {
                         f.completions);
         order.verify(f.scheduler).close();
         order.verify(f.dispatcher).awaitStops();
-        order.verify(f.tasks).awaitIdle();
+        order.verify(f.scheduler).awaitRequestWork();
         order.verify(f.endpoints).close();
         order.verify(f.deadlines).close();
-        order.verify(f.tasks).awaitIdle();
+        order.verify(f.scheduler).awaitRequestWork();
         order.verify(f.scheduler).finishRequestCleanup();
+        order.verify(f.scheduler).awaitRequestWork();
         order.verify(f.dispatcher).awaitStops();
         order.verify(f.tasks).close();
         order.verify(f.completions).close();
@@ -61,7 +61,7 @@ class SchedulingResourceShutdownTest {
 
     @Test
     void cleanupFailureStillClosesExecutorsAndIsReported() {
-        var f = new Fixture(mock(RequestTaskPool.class));
+        var f = new Fixture(mock(java.util.concurrent.ExecutorService.class));
         var first = new IllegalStateException("endpoint release failed");
         var second = new IllegalArgumentException("completion close failed");
         doThrow(first).when(f.endpoints).close();
@@ -74,11 +74,12 @@ class SchedulingResourceShutdownTest {
 
     @Test
     void waitsForRealRequestWorkBeforeClosingEndpoints() throws Exception {
-        var tasks = new RequestTaskPool();
+        var tasks = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
         var f = new Fixture(tasks);
         var entered = new CountDownLatch(1);
         var release = new CountDownLatch(1);
-        tasks.execute(
+        SchedulerTestServices.submitRequestWork(
+                f.scheduler,
                 () -> {
                     entered.countDown();
                     try {
@@ -105,11 +106,12 @@ class SchedulingResourceShutdownTest {
 
     @Test
     void rejectsShutdownFromAnOwnedTaskBeforeClosingAdmission() throws Exception {
-        var tasks = new RequestTaskPool();
+        var tasks = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
         var f = new Fixture(tasks);
         var result = new CompletableFuture<Throwable>();
         try {
-            tasks.execute(
+            SchedulerTestServices.submitRequestWork(
+                    f.scheduler,
                     () -> {
                         try {
                             f.lifecycle.offline();
@@ -128,19 +130,19 @@ class SchedulingResourceShutdownTest {
     }
 
     /**
-     * Combines a real request task pool with observed shutdown collaborators to check ordering and failure cleanup.
+     * Combines a request executor with observed shutdown collaborators to check ordering and failure cleanup.
      */
     private static class Fixture {
         final RequestRepository requests = new RequestRepository();
         AbstractRequestScheduler scheduler;
         final EndpointRegistry endpoints = mock(EndpointRegistry.class);
-        final RequestTaskPool tasks;
+        final java.util.concurrent.ExecutorService tasks;
         final ExpirationTimer deadlines = mock(ExpirationTimer.class);
         final ResponseCompletionExecutor completions = mock(ResponseCompletionExecutor.class);
         final EngineCancellation dispatcher = mock(EngineCancellation.class);
         final ApplicationLifecycle lifecycle;
 
-        Fixture(RequestTaskPool tasks) {
+        Fixture(java.util.concurrent.ExecutorService tasks) {
             this.tasks = tasks;
             scheduler =
                     org.mockito.Mockito.spy(

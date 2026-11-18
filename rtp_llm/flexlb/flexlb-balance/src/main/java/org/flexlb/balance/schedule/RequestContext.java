@@ -103,6 +103,10 @@ public final class RequestContext implements org.flexlb.worker.endpoint.WorkerRe
     private boolean prefillCleanupCompleted = true;
     private boolean decodeCleanupCompleted = true;
     private boolean notificationsDone;
+
+    private CleanupExecution cleanupExecution = CleanupExecution.IDLE;
+    private ResponseCompletionExecutor.Registration cleanupResponse;
+
     private boolean expired;
 
     private ExpirationTimer.Plan deadlines = new ExpirationTimer.Plan(0L, null, null, null);
@@ -621,6 +625,40 @@ public final class RequestContext implements org.flexlb.worker.endpoint.WorkerRe
         return true;
     }
 
+    /**
+     * Claims cleanup execution or asks the current executor to check the latest facts again.
+     * The response has already been prepared and belongs to this cleanup path.
+     */
+    synchronized boolean requestCleanup(ResponseCompletionExecutor.Registration response) {
+        if (response != null) cleanupResponse = response;
+        if (cleanupExecution != CleanupExecution.IDLE) {
+            cleanupExecution = CleanupExecution.RUN_AGAIN;
+            return false;
+        }
+        cleanupExecution = CleanupExecution.RUNNING;
+        return true;
+    }
+
+    synchronized boolean finishCleanupPass() {
+        if (cleanupExecution == CleanupExecution.RUN_AGAIN) {
+            cleanupExecution = CleanupExecution.RUNNING;
+            return false;
+        }
+        cleanupExecution = CleanupExecution.IDLE;
+        return true;
+    }
+
+    synchronized ResponseCompletionExecutor.Registration rejectCleanup() {
+        cleanupExecution = CleanupExecution.IDLE;
+        return takeCleanupResponse();
+    }
+
+    synchronized ResponseCompletionExecutor.Registration takeCleanupResponse() {
+        var response = cleanupResponse;
+        cleanupResponse = null;
+        return response;
+    }
+
     synchronized void recordCleanupProgress(
             RequestRoute exact,
             boolean prefillReleased,
@@ -936,5 +974,11 @@ public final class RequestContext implements org.flexlb.worker.endpoint.WorkerRe
             Objects.requireNonNull(requestContext, "requestContext");
             if (id <= 0L) throw new IllegalArgumentException("positive selection id required");
         }
+    }
+
+    private enum CleanupExecution {
+        IDLE,
+        RUNNING,
+        RUN_AGAIN
     }
 }

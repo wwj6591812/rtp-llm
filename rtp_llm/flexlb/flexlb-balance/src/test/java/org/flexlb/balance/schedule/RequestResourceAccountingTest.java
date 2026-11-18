@@ -52,6 +52,112 @@ class RequestResourceAccountingTest {
     private static final long TTL = TimeUnit.HOURS.toMillis(1);
 
     @Test
+    @org.junit.jupiter.api.Timeout(20)
+    void deadlineCancelsWhileDirectVirtualThreadsAreAtCapacity() throws Exception {
+        try (Fixture f = new Fixture()) {
+            f.decodeStatus(Map.of("101", task(ID)), Map.of(), TOTAL_KV - HARD_KV);
+            int slots = Math.clamp(Runtime.getRuntime().availableProcessors(), 2, 8);
+            var started = new java.util.concurrent.CountDownLatch(slots);
+            var release = new java.util.concurrent.CountDownLatch(1);
+            var threads = new java.util.concurrent.ConcurrentLinkedQueue<Thread>();
+            var router =
+                    (org.flexlb.balance.strategy.RequestRouteSelector)
+                            DeliveryTestSupport.getField(f.requests, "router");
+            when(router.selectAndRegister(any(), any()))
+                    .thenAnswer(
+                            call -> {
+                                threads.add(Thread.currentThread());
+                                started.countDown();
+                                RequestProtocolTestSupport.await(release);
+                                return org.flexlb.balance.strategy.SelectionResult.rejected(
+                                        org.flexlb.balance.request.Response.error(
+                                                org.flexlb.worker.endpoint.StrategyErrorType
+                                                        .NO_PREFILL_WORKER));
+                            });
+            try {
+                for (int i = 0; i <= slots; i++) {
+                    f.requests.submit(
+                            RequestProtocolTestSupport.context(f.item.ctx().getConfig(), 9900L + i),
+                            () -> {});
+                }
+                assertTrue(started.await(5, TimeUnit.SECONDS));
+                var token = f.item.ctx().snapshot().deadlines().inactivity();
+                assertNotNull(token);
+                f.requests.onDeadline(token, System.currentTimeMillis() + TTL + 1000);
+                assertTrue(
+                        f.cancelSent.await(5, TimeUnit.SECONDS),
+                        "Engine cancellation must start while all DIRECT selections are blocked");
+                assertEquals(slots, threads.size());
+                assertTrue(threads.stream().allMatch(Thread::isVirtual));
+            } finally {
+                release.countDown();
+                f.cleanup.complete(EngineGrpcClient.CancelReply.REQUEST_CLEANED);
+            }
+            SchedulerTestSupport.awaitRequestWork(f.runtime);
+            f.runtime.dispatcher.awaitStops();
+            f.requests.awaitRequestWork();
+            assertEquals(slots + 1, threads.size());
+            assertEquals(RequestContext.Phase.CLOSED, f.item.ctx().snapshot().phase());
+        }
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(15)
+    void engineReplyDuringCleanupReleasesCapacityAndShutdownWaits() throws Exception {
+        try (Fixture f = new Fixture()) {
+            f.decodeStatus(Map.of("101", task(ID)), Map.of(), TOTAL_KV - HARD_KV);
+            var entered = new java.util.concurrent.CountDownLatch(1);
+            var release = new java.util.concurrent.CountDownLatch(1);
+            var originalTimer = f.runtime.deadlines();
+            var timer = org.mockito.Mockito.spy(originalTimer);
+            var first = new java.util.concurrent.atomic.AtomicBoolean(true);
+            org.mockito.Mockito.doAnswer(
+                            call -> {
+                                if (first.getAndSet(false)) {
+                                    org.junit.jupiter.api.Assertions.assertThrows(
+                                            IllegalStateException.class,
+                                            f.requests::awaitRequestWork);
+                                    entered.countDown();
+                                    RequestProtocolTestSupport.await(release);
+                                }
+                                return call.callRealMethod();
+                            })
+                    .when(timer)
+                    .update(org.mockito.ArgumentMatchers.eq(f.item.ctx()), any());
+            SchedulerTestServices.setDependency(f.runtime, "timer", timer);
+            var cancel =
+                    CompletableFuture.runAsync(
+                            () ->
+                                    f.requests.cancel(
+                                            String.valueOf(ID), CancelReason.CLIENT_CANCELLED));
+            var waiter = new Thread(f.requests::awaitRequestWork);
+            try {
+                assertTrue(entered.await(5, TimeUnit.SECONDS));
+                waiter.start();
+                RequestProtocolTestSupport.awaitCondition(
+                        () -> waiter.getState() == Thread.State.WAITING);
+                f.requests.onEngineCancelReply(
+                        f.item, EngineGrpcClient.CancelReply.REQUEST_CLEANED);
+                assertTrue(waiter.isAlive());
+                release.countDown();
+                cancel.get(5, TimeUnit.SECONDS);
+                waiter.join(5_000);
+                assertFalse(waiter.isAlive());
+                assertEquals(RequestContext.Phase.CLOSED, f.item.ctx().snapshot().phase());
+                assertFalse(f.decode.resourceSnapshot().requests().containsKey(String.valueOf(ID)));
+                f.decodeStatus(Map.of(), Map.of(), TOTAL_KV);
+                f.assertEmpty();
+                f.assertCapacityReusable();
+            } finally {
+                release.countDown();
+                cancel.get(5, TimeUnit.SECONDS);
+                waiter.join(5_000);
+                SchedulerTestServices.setDependency(f.runtime, "timer", originalTimer);
+            }
+        }
+    }
+
+    @Test
     @org.junit.jupiter.api.Timeout(10)
     void cancellationReturnsBeforeEngineReplyAndRetainsCapacityUntilCleanup() throws Exception {
         try (Fixture f = new Fixture()) {
@@ -572,12 +678,10 @@ class RequestResourceAccountingTest {
         }
 
         void proveCleanup() throws Exception {
-            var closeQueue =
-                    (RequestCloseQueue) DeliveryTestSupport.getField(requests, "closeQueue");
-            closeQueue.awaitIdle();
+            requests.awaitRequestWork();
             cleanup.complete(EngineGrpcClient.CancelReply.REQUEST_CLEANED);
             runtime.dispatcher.awaitStops();
-            closeQueue.awaitIdle();
+            requests.awaitRequestWork();
             SchedulerTestSupport.awaitRequestWork(
                     org.flexlb.balance.schedule.SchedulerTestSupport.runtime(requests));
         }

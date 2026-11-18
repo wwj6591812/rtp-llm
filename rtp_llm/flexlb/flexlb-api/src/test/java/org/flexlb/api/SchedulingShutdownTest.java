@@ -70,7 +70,7 @@ class SchedulingShutdownTest {
                 new ApplicationWarmupState(),
                 scheduling,
                 mock(org.flexlb.balance.schedule.RequestRepository.class),
-                mock(org.flexlb.balance.schedule.RequestTaskPool.class),
+                mock(java.util.concurrent.ExecutorService.class),
                 mock(org.flexlb.balance.schedule.ExpirationTimer.class),
                 mock(org.flexlb.balance.schedule.EngineCancellation.class),
                 mock(org.flexlb.balance.schedule.ResponseCompletionExecutor.class),

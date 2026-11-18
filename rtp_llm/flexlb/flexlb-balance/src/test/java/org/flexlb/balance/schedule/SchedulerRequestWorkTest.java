@@ -4,10 +4,8 @@ import org.flexlb.config.FlexlbConfig;
 import org.flexlb.worker.endpoint.EndpointRegistry;
 import org.flexlb.worker.rpc.EngineGrpcClient;
 import org.junit.jupiter.api.Test;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -38,9 +36,9 @@ class SchedulerRequestWorkTest {
                                 ran.countDown();
                             });
             assertTrue(ran.await(5, TimeUnit.SECONDS));
-            assertEquals("request-work-1", worker.get().getName());
+            assertTrue(worker.get().isVirtual());
             assertTrue(worker.get().isDaemon());
-            assertFalse(worker.get().isVirtual());
+
             assertEquals("request-context", observedContext.get());
         } finally {
             close(executor);
@@ -108,7 +106,7 @@ class SchedulerRequestWorkTest {
             assertTrue(later.await(5, TimeUnit.SECONDS));
             SchedulerTestSupport.closeRequestWork(executor);
             org.junit.jupiter.api.Assertions.assertDoesNotThrow(
-                    () -> SchedulerTestServices.throwIfFailed(executor.tasks));
+                    executor.scheduling()::throwIfRequestFailed);
         } finally {
             close(executor);
         }
@@ -173,11 +171,7 @@ class SchedulerRequestWorkTest {
             assertFalse(concurrentWaiter.isAlive());
             assertEquals(2, interruptsPreserved.get());
             if (close) {
-                assertTrue(
-                        ((ExecutorService)
-                                        ReflectionTestUtils.getField(
-                                                executor.tasks(), "requestWorkers"))
-                                .isTerminated());
+                assertTrue(executor.tasks.isTerminated());
                 org.junit.jupiter.api.Assertions.assertThrows(
                         java.util.concurrent.RejectedExecutionException.class,
                         () -> executor.tasks().execute(() -> {}));
@@ -241,7 +235,7 @@ class SchedulerRequestWorkTest {
     @Test
     void rejectedRequestPoolIsReportedToTheCaller() {
         var runtime = runtime();
-        SchedulerTestSupport.requestWorkers(runtime).shutdown();
+        runtime.tasks.shutdown();
         try {
             assertThrows(RuntimeException.class, () -> runtime.tasks().execute(() -> {}));
         } finally {

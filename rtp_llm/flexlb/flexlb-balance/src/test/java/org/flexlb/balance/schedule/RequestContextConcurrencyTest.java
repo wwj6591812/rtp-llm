@@ -346,7 +346,7 @@ class RequestContextConcurrencyTest {
                             org.mockito.Mockito.withSettings()
                                     .useConstructor(
                                             repository,
-                                            mock(RequestTaskPool.class),
+                                            mock(java.util.concurrent.ExecutorService.class),
                                             mock(ExpirationTimer.class),
                                             mock(EngineCancellation.class),
                                             completions,
