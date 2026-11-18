@@ -176,6 +176,7 @@ class KvCacheManagerRetirementTest {
                     .when(local)
                     .calculateDiff(eq(ADDRESS), anySet());
             doThrow(new IllegalStateException("failed before global removal"))
+                    .doCallRealMethod()
                     .when(global)
                     .removeCacheBlock(ADDRESS, 1L);
         }

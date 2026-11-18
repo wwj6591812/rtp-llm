@@ -99,6 +99,21 @@ public class GlobalCacheIndex {
     }
 
     /**
+     * Remove an engine
+     *
+     * @param engineIp logical worker identity in {@code ip:port@engineIndex} format
+     */
+    void removeAllCacheBlockOfEngine(String engineIp, Set<Long> ownedKeys) {
+        if (engineIp == null || ownedKeys == null || ownedKeys.isEmpty()) {
+            return;
+        }
+        // Let healthy workers publish cache updates between retiring keys.
+        for (Long key : ownedKeys) {
+            removeCacheBlock(engineIp, key);
+        }
+    }
+
+    /**
      * Remove cache block from specified engine
      *
      * @param engineIp      logical worker identity in {@code ip:port@engineIndex} format
@@ -123,31 +138,6 @@ public class GlobalCacheIndex {
                 // Remove entire entry if no engine owns this cache block
                 if (engines.isEmpty()) {
                     blockToEnginesMap.remove(blockCacheKey);
-                }
-            }
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    /**
-     * Remove an engine
-     *
-     * @param engineIp logical worker identity in {@code ip:port@engineIndex} format
-     */
-    void removeAllCacheBlockOfEngine(String engineIp, Set<Long> ownedKeys) {
-        if (engineIp == null || ownedKeys == null || ownedKeys.isEmpty()) {
-            return;
-        }
-        lock.lock();
-        try {
-            for (Long key : ownedKeys) {
-                Set<String> engines = blockToEnginesMap.get(key);
-                if (engines != null && engines.remove(engineIp)) {
-                    totalMappings.decrement();
-                    if (engines.isEmpty()) {
-                        blockToEnginesMap.remove(key);
-                    }
                 }
             }
         } finally {

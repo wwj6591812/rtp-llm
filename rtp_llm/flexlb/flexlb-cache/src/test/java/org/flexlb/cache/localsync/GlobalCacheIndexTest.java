@@ -57,6 +57,67 @@ class GlobalCacheIndexTest {
     }
 
     @Test
+    void retirementAllowsHealthyUpdatesBetweenOwnedKeys() throws Exception {
+        globalCacheIndex.addCacheBlock(1L, "retiring");
+        globalCacheIndex.addCacheBlock(2L, "retiring");
+        var betweenKeys = new java.util.concurrent.CountDownLatch(1);
+        var continueRemoval = new java.util.concurrent.CountDownLatch(1);
+        var owned =
+                new java.util.AbstractSet<Long>() {
+                    @Override
+                    public int size() {
+                        return 2;
+                    }
+
+                    @Override
+                    public java.util.Iterator<Long> iterator() {
+                        return new java.util.Iterator<>() {
+                            private long next = 1;
+
+                            @Override
+                            public boolean hasNext() {
+                                return next <= 2;
+                            }
+
+                            @Override
+                            public Long next() {
+                                if (next == 2) {
+                                    betweenKeys.countDown();
+                                    try {
+                                        assertTrue(
+                                                continueRemoval.await(
+                                                        5, java.util.concurrent.TimeUnit.SECONDS));
+                                    } catch (InterruptedException failure) {
+                                        Thread.currentThread().interrupt();
+                                        throw new AssertionError(failure);
+                                    }
+                                }
+                                return next++;
+                            }
+                        };
+                    }
+                };
+        try (var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+            var retirement =
+                    executor.submit(
+                            () -> globalCacheIndex.removeAllCacheBlockOfEngine("retiring", owned));
+            try {
+                assertTrue(betweenKeys.await(2, java.util.concurrent.TimeUnit.SECONDS));
+                executor.submit(() -> globalCacheIndex.addCacheBlock(1L, "healthy"))
+                        .get(2, java.util.concurrent.TimeUnit.SECONDS);
+            } finally {
+                continueRemoval.countDown();
+            }
+            retirement.get(2, java.util.concurrent.TimeUnit.SECONDS);
+        }
+        assertEquals(1, globalCacheIndex.totalMappings());
+        assertEquals(
+                Map.of("healthy", 1),
+                globalCacheIndex.batchCalculatePrefixMatchLength(
+                        List.of("healthy", "retiring"), List.of(1L)));
+    }
+
+    @Test
     void testEmptyInput() {
         // Test empty input cases
         Map<String, Integer> result =

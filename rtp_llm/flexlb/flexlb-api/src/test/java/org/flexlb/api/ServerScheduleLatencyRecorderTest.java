@@ -104,6 +104,46 @@ class ServerScheduleLatencyRecorderTest {
         assertTrue(((Map<?, ?>) snapshot.get("server_total_ms")).containsKey("p99"));
     }
 
+    @Test
+    void pageBoundariesAndOverflowPreserveExactPercentiles() {
+        var recorder = new ServerScheduleLatencyRecorder();
+        long end = TimeUnit.SECONDS.toNanos(1000);
+        for (long value : new long[] {255, 256, 119999, 120000, 120001}) {
+            recorder.recordCompletion(contextWithRoute(end, value - 10, null), end);
+        }
+        var latency = (Map<?, ?>) recorder.snapshot().get("server_total_ms");
+        assertEquals(5L, latency.get("count"));
+        assertEquals(119999L, latency.get("p50"));
+        assertEquals(120000L, latency.get("p99"));
+        assertEquals(120001L, latency.get("max"));
+        assertEquals(72102.2, latency.get("mean"));
+    }
+
+    @Test
+    void concurrentFirstSamplesInOnePageKeepEveryCompletion() throws Exception {
+        var recorder = new ServerScheduleLatencyRecorder();
+        long end = TimeUnit.SECONDS.toNanos(1000);
+        var context = contextWithRoute(end, 246, null);
+        var start = new java.util.concurrent.CountDownLatch(1);
+        try (var executor = java.util.concurrent.Executors.newFixedThreadPool(8)) {
+            var futures = new java.util.ArrayList<java.util.concurrent.Future<?>>();
+            for (int i = 0; i < 8; i++)
+                futures.add(
+                        executor.submit(
+                                () -> {
+                                    assertTrue(start.await(2, TimeUnit.SECONDS));
+                                    for (int j = 0; j < 100; j++)
+                                        recorder.recordCompletion(context, end);
+                                    return null;
+                                }));
+            start.countDown();
+            for (var future : futures) future.get(5, TimeUnit.SECONDS);
+        }
+        var latency = (Map<?, ?>) recorder.snapshot().get("server_total_ms");
+        assertEquals(800L, latency.get("count"));
+        assertEquals(256L, latency.get("p99"));
+    }
+
     private static SchedulingMetadata metadata(int priority) {
         long now = System.currentTimeMillis();
         return SchedulingMetadata.of(priority, null, now + 1000, 50);
