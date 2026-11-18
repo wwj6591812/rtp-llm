@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 import java.util.List;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
@@ -20,8 +21,7 @@ class CapacityNotifierTest {
         notifier.addListener(listener);
         var endpoint =
                 new WorkerEndpoint(
-                        org.flexlb.worker.status.WorkerStatus.createDiscovered(
-                                RoleType.PREFILL, "g1", "localhost", 8000, 8001, null));
+                        createDiscovered(RoleType.PREFILL, "g1", "localhost", 8000, 8001, null));
         notifier.notifyChanged(endpoint);
         notifier.removeListener(listener);
         notifier.notifyChanged(endpoint);
@@ -39,8 +39,7 @@ class CapacityNotifierTest {
         notifier.addListener(changes::add);
         var endpoint =
                 new WorkerEndpoint(
-                        org.flexlb.worker.status.WorkerStatus.createDiscovered(
-                                RoleType.DECODE, "g1", "localhost", 9000, 9001, null));
+                        createDiscovered(RoleType.DECODE, "g1", "localhost", 9000, 9001, null));
         notifier.notifyChanged(endpoint);
         assertEquals(List.of(endpoint), changes);
     }

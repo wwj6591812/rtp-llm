@@ -51,6 +51,7 @@ import static org.flexlb.util.metrics.MetricConstant.CACHE_HIT_COMPARISON_DELTA_
 import static org.flexlb.util.metrics.MetricConstant.CACHE_HIT_COMPARISON_INPUT_TOKENS;
 import static org.flexlb.util.metrics.MetricConstant.CACHE_HIT_COMPARISON_LOCAL_STANDBY_DELTA_RATIO;
 import static org.flexlb.util.metrics.MetricConstant.CACHE_HIT_COMPARISON_LOCAL_STANDBY_DELTA_TOKENS;
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -271,7 +272,7 @@ class CacheHitFeedbackFlowTest {
         select("1005");
         poll(worker, task("1005", true, 500), true, 2);
         poll(worker, task("1005", true, 500), true, 2);
-        var lease = worker.tryBeginStatusPoll();
+        var lease = worker.tryBeginStatusPoll(0L);
         assertNotNull(lease, "comparison must not retain the poll lease");
         lease.close();
         assertTrue(events("cache_hit_comparison").isEmpty());
@@ -330,7 +331,7 @@ class CacheHitFeedbackFlowTest {
     @Test
     void feedbackPreservesLogicalEngineIdentityAndExactCachePrediction() throws Exception {
         WorkerStatus engine =
-                WorkerStatus.createDiscovered(
+                createDiscovered(
                         RoleType.PREFILL, "group", "10.0.0.1", 8080, 8081, "test", null, 1, 2);
         CacheMatchResult matches =
                 new CacheMatchResult(
@@ -423,7 +424,7 @@ class CacheHitFeedbackFlowTest {
         WorkerStatusRpcClient grpc = mock(WorkerStatusRpcClient.class);
         when(grpc.getWorkerStatusAsync(anyString(), anyInt(), anyLong(), anyLong(), any()))
                 .thenReturn(CompletableFuture.completedFuture(response(task, finished, version)));
-        var lease = status.tryBeginStatusPoll();
+        var lease = status.tryBeginStatusPoll(0L);
         assertNotNull(lease);
         new GrpcWorkerStatusRunner(
                         "model",

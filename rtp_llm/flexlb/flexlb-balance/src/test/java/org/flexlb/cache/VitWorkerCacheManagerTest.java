@@ -38,6 +38,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.IntStream;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -543,7 +544,7 @@ class VitWorkerCacheManagerTest {
     }
 
     private WorkerStatus worker(String ip, String group) {
-        return WorkerStatus.createDiscovered(RoleType.VIT, group, ip, 8000, 8001, "");
+        return createDiscovered(RoleType.VIT, group, ip, 8000, 8001, "");
     }
 
     private RequestContext context(String... keys) {

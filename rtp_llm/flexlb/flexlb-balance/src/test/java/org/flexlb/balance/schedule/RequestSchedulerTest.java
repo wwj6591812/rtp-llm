@@ -36,6 +36,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -672,8 +673,7 @@ class RequestSchedulerTest {
 
     private static PrefillEndpoint mockPrefillEndpoint(String ip, int port) {
         PrefillEndpoint endpoint = mock(PrefillEndpoint.class);
-        WorkerStatus status =
-                WorkerStatus.createDiscovered(RoleType.PREFILL, "g1", ip, port, port, "test");
+        WorkerStatus status = createDiscovered(RoleType.PREFILL, "g1", ip, port, port, "test");
         when(endpoint.getStatus()).thenReturn(status);
         when(endpoint.ipPort()).thenReturn(status.getLogicalIpPort());
         when(endpoint.getIp()).thenReturn(ip);

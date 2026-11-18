@@ -180,7 +180,7 @@ class WorkerSyncContractTest {
                         registry.statusSnapshot(status.getRole()).get(status.getLogicalIpPort()));
                 awaitCondition(
                         () -> {
-                            try (var lease = status.tryBeginStatusPoll()) {
+                            try (var lease = status.tryBeginStatusPoll(0L)) {
                                 return lease != null;
                             }
                         });
@@ -269,7 +269,7 @@ class WorkerSyncContractTest {
     private void poll(boolean alive, long version, Executor executor) {
         when(grpc.getWorkerStatusAsync(anyString(), anyInt(), anyLong(), anyLong(), any()))
                 .thenReturn(CompletableFuture.completedFuture(response(alive, version)));
-        var lease = status.tryBeginStatusPoll();
+        var lease = status.tryBeginStatusPoll(0L);
         assertNotNull(lease);
         new GrpcWorkerStatusRunner(
                         "model", status, lease, registry, reporter, grpc, 500L, cache, executor)
@@ -302,7 +302,7 @@ class WorkerSyncContractTest {
         new GrpcCacheStatusCheckRunner(
                         "model",
                         status,
-                        status.tryBeginCachePoll(),
+                        status.tryBeginCachePoll(0L),
                         registry,
                         reporter,
                         grpc,

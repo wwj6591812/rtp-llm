@@ -19,7 +19,6 @@ import org.flexlb.worker.endpoint.WorkerEndpoint.CommitStatus;
 import org.flexlb.worker.rpc.EngineGrpcClient;
 import org.flexlb.worker.status.TaskInfo;
 import org.flexlb.worker.status.TaskPhase;
-import org.flexlb.worker.status.WorkerStatus;
 import org.flexlb.worker.status.WorkerStatusResponse;
 import org.flexlb.worker.status.WorkerStatusTestSupport;
 import org.junit.jupiter.api.Test;
@@ -30,6 +29,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -347,9 +347,7 @@ class RequestResourceAccountingTest {
             runtime = org.flexlb.balance.schedule.SchedulerTestSupport.runtime(requests);
             org.flexlb.balance.schedule.SchedulerTestServices.setDependency(
                     runtime, "endpoints", endpoints);
-            var worker =
-                    WorkerStatus.createDiscovered(
-                            RoleType.PREFILL, "g", "127.0.0.1", 8080, 8081, "test");
+            var worker = createDiscovered(RoleType.PREFILL, "g", "127.0.0.1", 8080, 8081, "test");
             worker.lock.lock();
             try {
                 prefill =
@@ -376,7 +374,7 @@ class RequestResourceAccountingTest {
             }
             decode =
                     EndpointTestSupport.decode(
-                            WorkerStatus.createDiscovered(
+                            createDiscovered(
                                     RoleType.DECODE, "g", "127.0.0.2", 8080, 8081, "test"));
             decodeStatus(Map.of(), Map.of(), TOTAL_KV);
             {

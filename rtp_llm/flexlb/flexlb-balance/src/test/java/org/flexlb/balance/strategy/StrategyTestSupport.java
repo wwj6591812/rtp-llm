@@ -18,6 +18,8 @@ import org.mockito.Mockito;
 import java.util.List;
 import java.util.Map;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
+
 /**
  * Package-local fixtures built only from the frozen endpoint-facing ports.
  */
@@ -139,8 +141,7 @@ final class StrategyTestSupport {
             boolean alive,
             long availableKv,
             long totalKv) {
-        WorkerStatus status =
-                WorkerStatus.createDiscovered(role, group, ip, httpPort, grpcPort, "test-site");
+        WorkerStatus status = createDiscovered(role, group, ip, httpPort, grpcPort, "test-site");
         WorkerStatusResponse response =
                 response(
                         role,
@@ -181,7 +182,7 @@ final class StrategyTestSupport {
     static WorkerEndpoint publishEndpoint(EndpointRegistry registry, WorkerStatus source) {
         RoleType role = source.getRole();
         WorkerStatus status =
-                WorkerStatus.createDiscovered(
+                createDiscovered(
                         role,
                         source.getGroup(),
                         source.getIp(),

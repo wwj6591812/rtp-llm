@@ -33,6 +33,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.flexlb.balance.schedule.RequestProtocolTestSupport.awaitCondition;
 import static org.flexlb.balance.schedule.RequestProtocolTestSupport.commitRoute;
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -818,7 +819,7 @@ class RequestContextLifecycleTest {
         PrefillEndpoint prefill = mock(PrefillEndpoint.class);
         when(prefill.getStatus())
                 .thenReturn(
-                        org.flexlb.worker.status.WorkerStatus.createDiscovered(
+                        createDiscovered(
                                 RoleType.PREFILL, "test", "127.0.0.1", 8000, 8001, "test"));
         RequestRoute route =
                 SchedulingTestConfig.createRoute(

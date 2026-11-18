@@ -20,6 +20,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
@@ -81,7 +82,7 @@ class KvcmWorkerMetadataResolverTest {
 
     private WorkerStatus workerStatus(String deploymentName, KvCacheGroupMode mode) {
         WorkerStatus workerStatus =
-                WorkerStatus.createDiscovered(
+                createDiscovered(
                         RoleType.PREFILL,
                         "default",
                         "127.0.0.1",

@@ -9,6 +9,7 @@ import org.flexlb.worker.status.WorkerStatus;
 import org.junit.jupiter.api.Test;
 
 import static org.flexlb.worker.endpoint.EndpointTestSupport.runWithStateLock;
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -96,8 +97,7 @@ class EncoderEndpointTest {
     void endpointsWithoutRequestRecordsNeedNoExpirationWork() {
         WorkerEndpoint endpoint =
                 new WorkerEndpoint(
-                        WorkerStatus.createDiscovered(
-                                RoleType.VIT, "g", "127.0.0.1", 8001, 8002, ""));
+                        createDiscovered(RoleType.VIT, "g", "127.0.0.1", 8001, 8002, ""));
         assertEquals(
                 0,
                 endpoint.evictExpiredRequests(
@@ -307,9 +307,7 @@ class EncoderEndpointTest {
     }
 
     private EncoderEndpoint endpoint() {
-        var status =
-                WorkerStatus.createDiscovered(
-                        RoleType.ENCODER, "default", "127.0.0.1", 8001, 8002, "");
+        var status = createDiscovered(RoleType.ENCODER, "default", "127.0.0.1", 8001, 8002, "");
         status.lock.lock();
         try {
             org.flexlb.worker.status.WorkerStatusTestSupport.recordSuccessfulPoll(status, true);

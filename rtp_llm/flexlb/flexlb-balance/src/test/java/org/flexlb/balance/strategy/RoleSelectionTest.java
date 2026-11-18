@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -56,14 +57,13 @@ class RoleSelectionTest {
 
     @Test
     void vitUsesFrozenGroupAndTheEndpointsImmutableGeneration() {
-        var worker =
-                WorkerStatus.createDiscovered(RoleType.VIT, "selected", "host", 8000, 8001, "");
+        var worker = createDiscovered(RoleType.VIT, "selected", "host", 8000, 8001, "");
         var endpoint = mock(WorkerEndpoint.class);
         when(endpoint.getStatus()).thenReturn(worker);
         var selection = RoleSelection.auxiliary(endpoint, worker.topologySnapshot());
         worker.lock.lock();
         try {
-            worker.updateDiscoveryLabels("new-site", "updated");
+            worker.updateDiscoveryLabels("new-site", "updated", worker.getDeploymentName());
         } finally {
             worker.lock.unlock();
         }

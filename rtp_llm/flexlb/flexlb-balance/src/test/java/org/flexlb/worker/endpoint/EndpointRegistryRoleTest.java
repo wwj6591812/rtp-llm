@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.flexlb.worker.endpoint.EndpointTestSupport.decodeRoutingSnapshot;
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -50,8 +51,8 @@ class EndpointRegistryRoleTest {
             value = RoleType.class,
             names = {"PREFILL", "PDFUSION", "DECODE", "ENCODER", "VIT"})
     void endpointQueryFiltersGroupsAndRetainsAnImmutableDirectory(RoleType role) {
-        var first = WorkerStatus.createDiscovered(role, "a", "127.0.0.1", 8400, 8401, null);
-        var second = WorkerStatus.createDiscovered(role, "b", "127.0.0.1", 8500, 8501, null);
+        var first = createDiscovered(role, "a", "127.0.0.1", 8400, 8401, null);
+        var second = createDiscovered(role, "b", "127.0.0.1", 8500, 8501, null);
         var a =
                 EndpointTestSupport.publishEndpoint(
                         registry, role, first.getLogicalIpPort(), first);
@@ -285,7 +286,7 @@ class EndpointRegistryRoleTest {
 
         status.lock.lock();
         try {
-            status.updateDiscoveryLabels("site-b", "group-b");
+            status.updateDiscoveryLabels("site-b", "group-b", status.getDeploymentName());
         } finally {
             status.lock.unlock();
         }

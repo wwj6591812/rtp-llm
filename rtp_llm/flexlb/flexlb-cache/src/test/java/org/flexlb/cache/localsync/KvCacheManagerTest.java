@@ -19,6 +19,7 @@ import java.util.Set;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ForkJoinTask;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -253,7 +254,7 @@ class KvCacheManagerTest {
     }
 
     private static WorkerStatus workerStatus(int engineIndex, int multiEngineNum) {
-        return WorkerStatus.createDiscovered(
+        return createDiscovered(
                 RoleType.PREFILL,
                 "rtp",
                 "10.0.0.1",

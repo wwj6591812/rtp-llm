@@ -1,5 +1,7 @@
 package org.flexlb.worker.status;
 
+import org.flexlb.config.service.RoleType;
+
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -9,6 +11,52 @@ import java.util.Objects;
  */
 public final class WorkerStatusTestSupport {
     private WorkerStatusTestSupport() {}
+
+    public static WorkerStatus createDiscovered(
+            RoleType role, String group, String ip, int port, int grpcPort, String site) {
+        return createDiscovered(role, group, ip, port, grpcPort, site, null);
+    }
+
+    public static WorkerStatus createDiscovered(
+            RoleType role,
+            String group,
+            String ip,
+            int port,
+            int grpcPort,
+            String site,
+            String deploymentName) {
+        return createDiscovered(role, group, ip, port, grpcPort, site, deploymentName, 0, 1);
+    }
+
+    public static WorkerStatus createDiscovered(
+            RoleType role,
+            String group,
+            String ip,
+            int port,
+            int grpcPort,
+            String site,
+            String deploymentName,
+            int engineIndex,
+            int multiEngineNum) {
+        Objects.requireNonNull(ip, "ip");
+        if (port <= 0 || grpcPort <= 0) {
+            throw new IllegalArgumentException("worker ports must be positive");
+        }
+        if (engineIndex < 0 || multiEngineNum <= 0 || engineIndex >= multiEngineNum) {
+            throw new IllegalArgumentException("invalid logical worker index");
+        }
+        return new WorkerStatus(
+                new WorkerStatus.TopologySnapshot(
+                        group,
+                        ip,
+                        port,
+                        grpcPort,
+                        site,
+                        deploymentName,
+                        engineIndex,
+                        multiEngineNum),
+                role);
+    }
 
     public static boolean isEngineConfirmed(DecodeTaskPhase phase) {
         return phase == DecodeTaskPhase.ACCEPTED_NOT_RUNNING || phase == DecodeTaskPhase.RUNNING;
@@ -20,7 +68,7 @@ public final class WorkerStatusTestSupport {
     }
 
     public static WorkerStatus.PollHealth recordSuccessfulPoll(WorkerStatus status, boolean alive) {
-        try (var lease = Objects.requireNonNull(status.tryBeginStatusPoll(), "status poll slot")) {
+        try (var lease = Objects.requireNonNull(status.tryBeginStatusPoll(0L), "status poll slot")) {
             status.recordStatusRpcResult(lease, true, alive);
         }
         return status.pollHealth();

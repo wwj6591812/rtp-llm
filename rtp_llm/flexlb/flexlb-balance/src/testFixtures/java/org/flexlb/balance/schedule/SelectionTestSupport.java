@@ -11,6 +11,8 @@ import org.flexlb.worker.endpoint.PrefillEndpoint;
 import org.flexlb.worker.endpoint.WorkerEndpoint;
 import org.flexlb.worker.status.ServerStatus;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
+
 /**
  * Provides deterministic choices while the production selector performs registration.
  */
@@ -143,7 +145,7 @@ public final class SelectionTestSupport {
         var status = endpoint.getStatus();
         if (status == null) {
             status =
-                    org.flexlb.worker.status.WorkerStatus.createDiscovered(
+                    createDiscovered(
                             selected.getRole(),
                             selected.getGroup(),
                             java.util.Objects.requireNonNullElse(selected.getServerIp(), "127.0.0.1"),

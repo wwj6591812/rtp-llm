@@ -18,6 +18,7 @@ import java.util.concurrent.FutureTask;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -310,7 +311,7 @@ class EndpointTraceTest {
     @Test
     void busyAttemptsPreserveTheOwningPollProgress() {
         var worker =
-                WorkerStatus.createDiscovered(
+                createDiscovered(
                         org.flexlb.config.service.RoleType.DECODE,
                         "group",
                         "127.0.0.1",
@@ -405,7 +406,7 @@ class EndpointTraceTest {
     @Test
     void snapshotsRemainReadableWhileCacheMutationLockIsHeldAndOtherCallersWait() throws Exception {
         var worker =
-                WorkerStatus.createDiscovered(
+                createDiscovered(
                         org.flexlb.config.service.RoleType.PREFILL,
                         "group",
                         "127.0.0.1",

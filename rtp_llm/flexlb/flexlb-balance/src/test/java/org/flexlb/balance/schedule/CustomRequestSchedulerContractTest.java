@@ -22,6 +22,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.concurrent.TimeUnit;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -288,7 +289,7 @@ class CustomRequestSchedulerContractTest {
             var endpoint = mock(PrefillEndpoint.class);
             when(endpoint.getStatus())
                     .thenReturn(
-                            org.flexlb.worker.status.WorkerStatus.createDiscovered(
+                            createDiscovered(
                                     org.flexlb.config.service.RoleType.PREFILL,
                                     null,
                                     "127.0.0.1",

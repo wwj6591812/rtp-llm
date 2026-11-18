@@ -17,6 +17,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -49,7 +50,7 @@ class WorkerStatusTest {
     void discoveredWorkersStillRejectMissingRoles() {
         assertThrows(
                 NullPointerException.class,
-                () -> WorkerStatus.createDiscovered(null, "g", "127.0.0.1", 8080, 8090, "s"));
+                () -> createDiscovered(null, "g", "127.0.0.1", 8080, 8090, "s"));
     }
 
     @Test
@@ -67,7 +68,7 @@ class WorkerStatusTest {
     @DisplayName("Discovery identity keeps a physical transport address and logical engine key")
     void discoveredWorkerSeparatesPhysicalAndLogicalIdentity() {
         WorkerStatus status =
-                WorkerStatus.createDiscovered(
+                createDiscovered(
                         RoleType.PREFILL,
                         "group-a",
                         "10.0.0.1",
@@ -90,7 +91,7 @@ class WorkerStatusTest {
     @DisplayName("Single-engine workers retain their physical metric identity")
     void singleEngineWorkerUsesPhysicalMetricIdentity() {
         WorkerStatus status =
-                WorkerStatus.createDiscovered(
+                createDiscovered(
                         RoleType.PREFILL,
                         "group-a",
                         "10.0.0.1",
@@ -105,8 +106,7 @@ class WorkerStatusTest {
     }
 
     private static WorkerStatus discovered() {
-        return WorkerStatus.createDiscovered(
-                RoleType.PREFILL, "group-a", "10.0.0.1", 8080, 9090, "site-a");
+        return createDiscovered(RoleType.PREFILL, "group-a", "10.0.0.1", 8080, 9090, "site-a");
     }
 
     /**
@@ -445,7 +445,7 @@ class WorkerStatusTest {
             WorkerStatus status = discovered();
             status.lock.lock();
             try {
-                status.updateDiscoveryLabels("site-b", "group-b");
+                status.updateDiscoveryLabels("site-b", "group-b", status.getDeploymentName());
             } finally {
                 status.lock.unlock();
             }
@@ -463,7 +463,9 @@ class WorkerStatusTest {
             WorkerStatus status = discovered();
             assertThrows(
                     IllegalStateException.class,
-                    () -> status.updateDiscoveryLabels("site-x", "group-x"));
+                    () ->
+                            status.updateDiscoveryLabels(
+                                    "site-x", "group-x", status.getDeploymentName()));
         }
     }
 
@@ -493,27 +495,27 @@ class WorkerStatusTest {
         @Test
         void onlyDistinctValidNotAliveResponsesCountAndAliveResetsTheStreak() {
             WorkerStatus status = discovered();
-            try (var lease = status.tryBeginStatusPoll()) {
+            try (var lease = status.tryBeginStatusPoll(0L)) {
                 status.recordStatusRpcResult(lease, true, false);
                 status.recordStatusRpcResult(lease, true, false);
                 assertEquals(1L, status.pollHealth().consecutiveWorkerFailures());
             }
-            try (var lease = status.tryBeginStatusPoll()) {
+            try (var lease = status.tryBeginStatusPoll(0L)) {
                 status.recordStatusRpcResult(lease, false, false);
                 assertEquals(1L, status.pollHealth().consecutiveWorkerFailures());
             }
-            try (var lease = status.tryBeginStatusPoll()) {
+            try (var lease = status.tryBeginStatusPoll(0L)) {
                 status.recordStatusRpcResult(lease, true, true);
                 assertEquals(0L, status.pollHealth().consecutiveWorkerFailures());
             }
             for (int i = 0; i < 3; i++) {
-                try (var lease = status.tryBeginStatusPoll()) {
+                try (var lease = status.tryBeginStatusPoll(0L)) {
                     status.recordStatusRpcResult(lease, true, false);
                 }
             }
             assertEquals(
                     WorkerStatus.CloseReason.CONSECUTIVE_WORKER_FAILURES, status.closeReason());
-            assertNull(status.tryBeginStatusPoll());
+            assertNull(status.tryBeginStatusPoll(0L));
             assertFalse(status.isAvailableForScheduling());
         }
     }

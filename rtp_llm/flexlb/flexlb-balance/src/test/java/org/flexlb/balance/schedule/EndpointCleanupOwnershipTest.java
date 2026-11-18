@@ -11,7 +11,6 @@ import org.flexlb.worker.endpoint.DecodeResources;
 import org.flexlb.worker.endpoint.EndpointCleanupTestSupport;
 import org.flexlb.worker.endpoint.EndpointTestSupport;
 import org.flexlb.worker.endpoint.WorkerEndpoint;
-import org.flexlb.worker.status.WorkerStatus;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -27,6 +26,7 @@ import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.function.ToIntFunction;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -78,8 +78,7 @@ class EndpointCleanupOwnershipTest {
         registry.submit(RequestProtocolTestSupport.context(config, id), () -> {});
         var endpoint =
                 EndpointTestSupport.decode(
-                        WorkerStatus.createDiscovered(
-                                RoleType.DECODE, null, "127.0.0.1", 8080, 8081, null));
+                        createDiscovered(RoleType.DECODE, null, "127.0.0.1", 8080, 8081, null));
         {
             var selectedEndpoint = endpoint;
 
@@ -122,8 +121,7 @@ class EndpointCleanupOwnershipTest {
         long id = 7003L;
         var endpoint =
                 EndpointTestSupport.decode(
-                        WorkerStatus.createDiscovered(
-                                RoleType.DECODE, null, "127.0.0.1", 8080, 8081, null));
+                        createDiscovered(RoleType.DECODE, null, "127.0.0.1", 8080, 8081, null));
         var oldReservation = reserve(endpoint, id, 100L, 150L);
         if (confirmed) {
             EndpointCleanupTestSupport.confirmDecode(endpoint, id);
@@ -224,8 +222,7 @@ class EndpointCleanupOwnershipTest {
         registry.submit(RequestProtocolTestSupport.context(config, id), () -> {});
         var endpoint =
                 EndpointTestSupport.decode(
-                        WorkerStatus.createDiscovered(
-                                RoleType.DECODE, null, "127.0.0.1", 8080, 8081, null));
+                        createDiscovered(RoleType.DECODE, null, "127.0.0.1", 8080, 8081, null));
         var reservation = reserve(endpoint, id, 100L, 150L);
         EndpointCleanupTestSupport.confirmDecode(endpoint, id);
         assertEquals(

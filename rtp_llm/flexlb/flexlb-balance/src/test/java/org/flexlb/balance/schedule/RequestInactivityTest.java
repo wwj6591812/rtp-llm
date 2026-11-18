@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -137,12 +138,8 @@ class RequestInactivityTest {
                 StrategyErrorType.SCHEDULING_DEADLINE_EXCEEDED);
         var prefill = org.mockito.Mockito.mock(org.flexlb.worker.endpoint.PrefillEndpoint.class);
         var decode = mock(DecodeEndpoint.class);
-        var prefillStatus =
-                org.flexlb.worker.status.WorkerStatus.createDiscovered(
-                        RoleType.PREFILL, null, "127.0.0.1", 8080, 8090, null);
-        var decodeStatus =
-                org.flexlb.worker.status.WorkerStatus.createDiscovered(
-                        RoleType.DECODE, null, "127.0.0.2", 8080, 8090, null);
+        var prefillStatus = createDiscovered(RoleType.PREFILL, null, "127.0.0.1", 8080, 8090, null);
+        var decodeStatus = createDiscovered(RoleType.DECODE, null, "127.0.0.2", 8080, 8090, null);
         when(prefill.getStatus()).thenReturn(prefillStatus);
         when(decode.getStatus()).thenReturn(decodeStatus);
         var prefillRegistration =

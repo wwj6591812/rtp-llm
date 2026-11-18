@@ -14,7 +14,6 @@ import org.flexlb.config.service.RoleType;
 import org.flexlb.worker.endpoint.EndpointRegistry;
 import org.flexlb.worker.endpoint.PrefillEndpoint;
 import org.flexlb.worker.endpoint.WorkerEndpoint;
-import org.flexlb.worker.status.WorkerStatus;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -23,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -212,7 +212,7 @@ class TokenBalancedPrefillStrategyTest {
 
     private static PrefillEndpoint endpoint(String address, long work, boolean full) {
         var endpoint = mock(PrefillEndpoint.class);
-        var status = WorkerStatus.createDiscovered(RoleType.PREFILL, null, address, 1, 2, null);
+        var status = createDiscovered(RoleType.PREFILL, null, address, 1, 2, null);
         when(endpoint.getStatus()).thenReturn(status);
         when(endpoint.ipPort()).thenReturn(address);
         when(endpoint.acceptsNewRequests()).thenReturn(true);

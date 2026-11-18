@@ -35,6 +35,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -535,8 +536,7 @@ class EncoderSchedulingIntegrationTest {
             Map<String, WorkerStatus.TaskObservation> tasks,
             long running,
             long waiting) {
-        var status =
-                WorkerStatus.createDiscovered(RoleType.ENCODER, group, ip, port, port + 1, "site");
+        var status = createDiscovered(RoleType.ENCODER, group, ip, port, port + 1, "site");
         var endpoint = new EncoderEndpoint(status, availability);
         publish(endpoint, tasks, Map.of(), running, waiting);
         status.lock.lock();

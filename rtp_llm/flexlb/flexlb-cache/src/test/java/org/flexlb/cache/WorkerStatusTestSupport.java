@@ -8,6 +8,8 @@ import org.flexlb.worker.status.WorkerStatusResponse;
 
 import java.util.Map;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
+
 /**
  * Creates worker status fixtures with explicit topology and engine observations.
  */
@@ -31,8 +33,7 @@ public final class WorkerStatusTestSupport {
             boolean alive,
             CacheStatus cacheStatus,
             int cacheMatchRollbackBlocks) {
-        WorkerStatus workerStatus =
-                WorkerStatus.createDiscovered(role, "default", ip, port, port + 1, "");
+        WorkerStatus workerStatus = createDiscovered(role, "default", ip, port, port + 1, "");
         publishObservation(workerStatus, role, alive, cacheMatchRollbackBlocks);
         if (cacheStatus != null) {
             workerStatus.cacheMutationLock.lock();

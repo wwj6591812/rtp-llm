@@ -29,12 +29,12 @@ import org.flexlb.worker.endpoint.EndpointTestSupport;
 import org.flexlb.worker.endpoint.PrefillEndpoint;
 import org.flexlb.worker.rpc.EngineGrpcClient;
 import org.flexlb.worker.status.ServerStatus;
-import org.flexlb.worker.status.WorkerStatus;
 import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -256,7 +256,7 @@ class ExternalRequestSchedulerTest {
                             : new ManualDirectScheduler(this, reporter);
             endpoint =
                     EndpointTestSupport.realPrefill(
-                            WorkerStatus.createDiscovered(
+                            createDiscovered(
                                     separateDecode ? RoleType.PREFILL : RoleType.PDFUSION,
                                     "group",
                                     "127.0.0.1",
@@ -270,7 +270,7 @@ class ExternalRequestSchedulerTest {
             decode =
                     separateDecode
                             ? EndpointTestSupport.decode(
-                                    WorkerStatus.createDiscovered(
+                                    createDiscovered(
                                             RoleType.DECODE,
                                             "group",
                                             "127.0.0.2",

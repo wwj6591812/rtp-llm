@@ -491,7 +491,7 @@ class EndpointRegistryCloseTest {
         new GrpcWorkerStatusRunner(
                         "test-model",
                         status,
-                        status.tryBeginStatusPoll(),
+                        status.tryBeginStatusPoll(0L),
                         registry,
                         mock(ServiceMetricsReporter.class),
                         rpc,

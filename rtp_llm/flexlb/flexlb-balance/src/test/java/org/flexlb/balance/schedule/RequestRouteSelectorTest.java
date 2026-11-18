@@ -37,6 +37,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -1446,9 +1447,7 @@ class RequestRouteSelectorTest {
         }
         when(endpoint.getIp()).thenReturn(ip);
         when(endpoint.getHttpPort()).thenReturn(httpPort);
-        var worker =
-                org.flexlb.worker.status.WorkerStatus.createDiscovered(
-                        role, group, ip, httpPort, httpPort + 1, null);
+        var worker = createDiscovered(role, group, ip, httpPort, httpPort + 1, null);
         when(endpoint.getStatus()).thenReturn(worker);
         String address = worker.getLogicalIpPort();
         when(endpoint.ipPort()).thenReturn(address);

@@ -12,7 +12,6 @@ import org.flexlb.worker.endpoint.CapacityKey;
 import org.flexlb.worker.endpoint.CapacityNotifier;
 import org.flexlb.worker.endpoint.WorkerAdmissionCapacity;
 import org.flexlb.worker.endpoint.WorkerEndpoint;
-import org.flexlb.worker.status.WorkerStatus;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -25,6 +24,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -204,9 +204,7 @@ class SchedulerExecutionTest {
 
     private static WorkerEndpoint endpoint() {
         var endpoint = mock(WorkerEndpoint.class);
-        var status =
-                WorkerStatus.createDiscovered(
-                        RoleType.PREFILL, null, "127.0.0.1", 8080, 8081, null);
+        var status = createDiscovered(RoleType.PREFILL, null, "127.0.0.1", 8080, 8081, null);
         when(endpoint.getStatus()).thenReturn(status);
         when(endpoint.ipPort()).thenReturn(status.getLogicalIpPort());
         return endpoint;

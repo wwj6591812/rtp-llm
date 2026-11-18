@@ -81,7 +81,7 @@ public class WorkerStatus {
     private final AtomicReference<PollLease> statusApplication = new AtomicReference<>();
     private final AtomicReference<PollLease> cachePollLease = new AtomicReference<>();
 
-    private WorkerStatus(TopologySnapshot initialTopology, EngineObservation initialStatus) {
+    WorkerStatus(TopologySnapshot initialTopology, RoleType role) {
         topology = new AtomicReference<>(initialTopology);
         workerIdentity =
                 new WorkerIdentity(
@@ -91,7 +91,10 @@ public class WorkerStatus {
         committedStatus =
                 new AtomicReference<>(
                         new CommittedWorkerStatus(
-                                initialStatus, new AppliedStatusCursor(-1L, -1L)));
+                                new EngineObservation(
+                                        role, null, 0L, 0L, Map.of(), 0.0, 0L, 0L, 0L, 0L, 0L, 0L,
+                                        0L, 0L),
+                                new AppliedStatusCursor(-1L, -1L)));
         long discoveredAtUs = TimeUnit.NANOSECONDS.toMicros(System.nanoTime());
         pollHealth = new AtomicReference<>(new PollHealth(discoveredAtUs, 0L, 0L, false));
     }
@@ -126,56 +129,6 @@ public class WorkerStatus {
         return !updatesStopped && closeReason == null;
     }
 
-    /**
-     * Create one fully initialized service-discovery generation.
-     */
-    public static WorkerStatus createDiscovered(
-            RoleType role, String group, String ip, int port, int grpcPort, String site) {
-        return createDiscovered(role, group, ip, port, grpcPort, site, null);
-    }
-
-    public static WorkerStatus createDiscovered(
-            RoleType role,
-            String group,
-            String ip,
-            int port,
-            int grpcPort,
-            String site,
-            String deploymentName) {
-        return createDiscovered(role, group, ip, port, grpcPort, site, deploymentName, 0, 1);
-    }
-
-    public static WorkerStatus createDiscovered(
-            RoleType role,
-            String group,
-            String ip,
-            int port,
-            int grpcPort,
-            String site,
-            String deploymentName,
-            int engineIndex,
-            int multiEngineNum) {
-        Objects.requireNonNull(ip, "ip");
-        if (port <= 0 || grpcPort <= 0) {
-            throw new IllegalArgumentException("worker ports must be positive");
-        }
-        if (engineIndex < 0 || multiEngineNum <= 0 || engineIndex >= multiEngineNum) {
-            throw new IllegalArgumentException("invalid logical worker index");
-        }
-        return new WorkerStatus(
-                new TopologySnapshot(
-                        group,
-                        ip,
-                        port,
-                        grpcPort,
-                        site,
-                        deploymentName,
-                        engineIndex,
-                        multiEngineNum),
-                new EngineObservation(
-                        role, null, 0L, 0L, Map.of(), 0.0, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L));
-    }
-
     public static WorkerStatus createDiscovered(RoleType role, WorkerHost host) {
         return new WorkerStatus(
                 new TopologySnapshot(
@@ -188,8 +141,7 @@ public class WorkerStatus {
                         host.getEngineIndex(),
                         host.getMultiEngineNum(),
                         host.getWorkerStatusPort()),
-                new EngineObservation(
-                        role, null, 0L, 0L, Map.of(), 0.0, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L));
+                role);
     }
 
     @JsonIgnore
@@ -323,10 +275,6 @@ public class WorkerStatus {
     /**
      * Atomically refresh discovery-owned placement labels for this generation.
      */
-    public void updateDiscoveryLabels(String site, String group) {
-        updateDiscoveryLabels(site, group, topology.get().deploymentName());
-    }
-
     public void updateDiscoveryLabels(String site, String group, String deploymentName) {
         requireActiveGeneration();
         topology.updateAndGet(
@@ -444,10 +392,6 @@ public class WorkerStatus {
     /**
      * Acquire the one in-flight status-poll slot for this generation.
      */
-    public PollLease tryBeginStatusPoll() {
-        return tryBeginStatusPoll(0L);
-    }
-
     public PollLease tryBeginStatusPoll(long cycle) {
         synchronized (healthGate) {
             if (updatesStopped || closeReason != null) {
@@ -472,10 +416,6 @@ public class WorkerStatus {
     /**
      * Acquire the independent cache-poll slot for this generation.
      */
-    public PollLease tryBeginCachePoll() {
-        return tryBeginCachePoll(0L);
-    }
-
     public PollLease tryBeginCachePoll(long cycle) {
         synchronized (healthGate) {
             if (updatesStopped || closeReason != null) {

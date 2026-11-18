@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -29,9 +30,7 @@ class LocalSyncCacheMatchProviderSafetyTest {
                         org.mockito.ArgumentMatchers.anyString(),
                         anyLong(),
                         org.mockito.ArgumentMatchers.anyString());
-        var worker =
-                org.flexlb.worker.status.WorkerStatus.createDiscovered(
-                        RoleType.PREFILL, null, "127.0.0.1", 8080, 8081, null);
+        var worker = createDiscovered(RoleType.PREFILL, null, "127.0.0.1", 8080, 8081, null);
         var status = new org.flexlb.worker.cache.CacheStatus();
         status.setCachedKeys(java.util.Set.of(1L));
         worker.cacheMutationLock.lock();

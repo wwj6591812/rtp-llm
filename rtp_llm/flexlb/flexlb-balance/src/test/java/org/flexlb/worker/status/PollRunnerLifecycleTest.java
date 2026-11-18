@@ -173,6 +173,6 @@ class PollRunnerLifecycleTest {
     }
 
     private static WorkerStatus.PollLease acquire(WorkerStatus status, boolean cachePoll) {
-        return cachePoll ? status.tryBeginCachePoll() : status.tryBeginStatusPoll();
+        return cachePoll ? status.tryBeginCachePoll(0L) : status.tryBeginStatusPoll(0L);
     }
 }

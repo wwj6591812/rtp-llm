@@ -190,8 +190,8 @@ class EngineSyncRunnerTest {
         runner.run();
 
         WorkerStatus status = endpointRegistry.statusSnapshot(RoleType.PREFILL).get(ipPort);
-        WorkerStatus.PollLease statusLease = status.tryBeginStatusPoll();
-        WorkerStatus.PollLease cacheLease = status.tryBeginCachePoll();
+        WorkerStatus.PollLease statusLease = status.tryBeginStatusPoll(0L);
+        WorkerStatus.PollLease cacheLease = status.tryBeginCachePoll(0L);
         assertNotNull(statusLease);
         assertNotNull(cacheLease);
         statusLease.close();
@@ -424,7 +424,7 @@ class EngineSyncRunnerTest {
                         RoleType.PREFILL, oldGroup, "127.0.0.1", 61000, 61001, "site-a");
         discover(directory, oldStatus);
         RunnerTestSupport.publishEndpoint(registry, RoleType.PREFILL, ipPort, oldStatus);
-        var hungPoll = oldStatus.tryBeginStatusPoll();
+        var hungPoll = oldStatus.tryBeginStatusPoll(0L);
         assertNotNull(hungPoll);
         WorkerHost replacement =
                 new WorkerHost("127.0.0.1", 61000, 61001, 61005, "site-b", newGroup);
@@ -491,8 +491,8 @@ class EngineSyncRunnerTest {
         RunnerTestSupport.publish(
                 status,
                 RunnerTestSupport.response(status, true, 1L, 0L, 0L, stepLatencyMs, Map.of()));
-        assertNotNull(status.tryBeginStatusPoll());
-        assertNotNull(status.tryBeginCachePoll());
+        assertNotNull(status.tryBeginStatusPoll(0L));
+        assertNotNull(status.tryBeginCachePoll(0L));
         return status;
     }
 

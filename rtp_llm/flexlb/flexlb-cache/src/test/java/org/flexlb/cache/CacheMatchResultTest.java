@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Map;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -136,7 +137,7 @@ class CacheMatchResultTest {
     }
 
     private static WorkerStatus worker(String ip, int port, int engineIndex, int multiEngineNum) {
-        return WorkerStatus.createDiscovered(
+        return createDiscovered(
                 RoleType.PREFILL,
                 "default",
                 ip,

@@ -80,25 +80,6 @@ public class KvCacheManager implements EngineCacheInvalidator {
     }
 
     /**
-     * Query engine cache matching status
-     *
-     * @param blockCacheKeys List of cache block hash values to query
-     * @param candidateEngineIpPorts exact live candidate addresses
-     * @return Engine matching result map, key: engineIpPort, value: prefixMatchLength
-     */
-    public Map<String /*engineIpPort*/, Integer /*prefixMatchLength*/> findMatchingEngines(
-            List<Long> blockCacheKeys, List<String> candidateEngineIpPorts) {
-
-        if (blockCacheKeys == null || blockCacheKeys.isEmpty()) {
-            return Collections.emptyMap();
-        }
-
-        // Batch calculate prefix match length
-        return globalCacheIndex.batchCalculatePrefixMatchLength(
-                candidateEngineIpPorts, blockCacheKeys);
-    }
-
-    /**
      * Query engine cache matching status for live workers in a role/group.
      *
      * @param blockCacheKeys List of cache block hash values to query

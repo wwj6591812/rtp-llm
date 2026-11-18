@@ -34,6 +34,7 @@ import java.util.Arrays;
 import java.util.Map;
 import java.util.OptionalLong;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
@@ -67,7 +68,7 @@ class ServiceMetricsReporterTest {
     void reportsStepSamplesWithEngineIdentityAndPhase() {
         reporter.init();
         WorkerStatus worker =
-                WorkerStatus.createDiscovered(
+                createDiscovered(
                         RoleType.PDFUSION, "test-group", "10.0.0.1", 8080, 8081, null, null, 1, 2);
         for (int prefillRequests : new int[] {2, 0}) {
             var step =
@@ -630,8 +631,7 @@ class ServiceMetricsReporterTest {
     @Test
     void shouldKeepBareIpForMultiEngineWorkerTaskCounts() {
         WorkerStatus workerStatus =
-                WorkerStatus.createDiscovered(
-                        RoleType.PREFILL, null, "10.0.0.1", 8080, 8081, null, null, 1, 2);
+                createDiscovered(RoleType.PREFILL, null, "10.0.0.1", 8080, 8081, null, null, 1, 2);
 
         reportStatus(workerStatus, null, 3, 4);
 
@@ -1101,7 +1101,7 @@ class ServiceMetricsReporterTest {
     @ValueSource(ints = {1, 2})
     void comparisonUsesObservedWorkersMetricIdentity(int multiEngineNum) {
         WorkerStatus worker =
-                WorkerStatus.createDiscovered(
+                createDiscovered(
                         RoleType.PREFILL,
                         "test-group",
                         "10.0.0.1",
@@ -1214,8 +1214,7 @@ class ServiceMetricsReporterTest {
             CacheStatus cacheStatus,
             long runningQueryLen,
             long waitingQueryLen) {
-        WorkerStatus workerStatus =
-                WorkerStatus.createDiscovered(role, null, ip, 8080, 8081, "test-site");
+        WorkerStatus workerStatus = createDiscovered(role, null, ip, 8080, 8081, "test-site");
         WorkerStatusResponse response = new WorkerStatusResponse();
         response.setRole(role);
         response.setCacheStatus(cacheStatus);

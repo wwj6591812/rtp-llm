@@ -12,6 +12,8 @@ import org.mockito.Mockito;
 
 import java.util.Map;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
+
 /**
  * Package-local fixtures for the frozen status/endpoint composition boundary.
  */
@@ -50,7 +52,7 @@ public final class RunnerTestSupport {
 
     public static WorkerStatus discovered(
             RoleType role, String group, String ip, int port, int grpcPort, String site) {
-        return WorkerStatus.createDiscovered(role, group, ip, port, grpcPort, site);
+        return createDiscovered(role, group, ip, port, grpcPort, site);
     }
 
     public static void publish(WorkerStatus status, WorkerStatusResponse response) {

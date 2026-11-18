@@ -13,13 +13,11 @@ import com.fasterxml.jackson.databind.ObjectWriter;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.fasterxml.jackson.databind.type.CollectionType;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
 import java.util.Iterator;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -167,17 +165,6 @@ public class JsonUtils {
             return reader.readValue(tree);
         } catch (IOException e) {
             throw StatusEnum.JSON_MAPPER_ERROR.toException(e);
-        }
-    }
-
-    public static <T> List<T> toList(String text, Class<T> valueType) throws FlexLBException {
-        CollectionType type =
-                MAPPER.getTypeFactory().constructCollectionType(List.class, valueType);
-        ObjectReader reader = MAPPER.readerFor(type);
-        try {
-            return reader.readValue(text);
-        } catch (IOException e) {
-            throw StatusEnum.JSON_MAPPER_ERROR.toException(text, e);
         }
     }
 

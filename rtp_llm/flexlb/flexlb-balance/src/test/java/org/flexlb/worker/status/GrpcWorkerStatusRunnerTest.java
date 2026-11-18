@@ -68,7 +68,7 @@ class GrpcWorkerStatusRunnerTest {
                 new GrpcWorkerStatusRunner(
                                 "model",
                                 status,
-                                status.tryBeginStatusPoll(),
+                                status.tryBeginStatusPoll(0L),
                                 registry,
                                 reporter,
                                 grpc,
@@ -92,7 +92,7 @@ class GrpcWorkerStatusRunnerTest {
         WorkerStatus status =
                 RunnerTestSupport.discovered(
                         RoleType.DECODE, null, "127.0.0.1", 8080, 8081, "test-site");
-        WorkerStatus.PollLease pollLease = status.tryBeginStatusPoll();
+        WorkerStatus.PollLease pollLease = status.tryBeginStatusPoll(0L);
         assertNotNull(pollLease);
 
         AtomicBoolean publicationHeldLock = new AtomicBoolean();
@@ -165,7 +165,7 @@ class GrpcWorkerStatusRunnerTest {
                 projectionReleasedLock.get(),
                 "new endpoint notifications must publish after releasing the lock");
         projectionReleasedLock.set(false);
-        WorkerStatus.PollLease nextPoll = status.tryBeginStatusPoll();
+        WorkerStatus.PollLease nextPoll = status.tryBeginStatusPoll(0L);
         assertNotNull(nextPoll);
         new GrpcWorkerStatusRunner(
                         "test-model",
@@ -189,7 +189,7 @@ class GrpcWorkerStatusRunnerTest {
         WorkerStatus status =
                 RunnerTestSupport.alive(
                         RoleType.DECODE, null, "127.0.0.1", 8080, 8081, "test-site");
-        WorkerStatus.PollLease pollLease = status.tryBeginStatusPoll();
+        WorkerStatus.PollLease pollLease = status.tryBeginStatusPoll(0L);
         assertNotNull(pollLease);
 
         WorkerEndpoint endpoint = mock(WorkerEndpoint.class);
@@ -261,7 +261,7 @@ class GrpcWorkerStatusRunnerTest {
                 observation.getValue().observation().activeTasks().values().stream()
                         .anyMatch(active -> active.requestId().equals("123")));
         assertTrue(projected.get());
-        WorkerStatus.PollLease nextPoll = status.tryBeginStatusPoll();
+        WorkerStatus.PollLease nextPoll = status.tryBeginStatusPoll(0L);
         assertNotNull(nextPoll, "the asynchronous owner must close the exact poll lease");
         nextPoll.close();
     }
@@ -283,7 +283,7 @@ class GrpcWorkerStatusRunnerTest {
         assertNull(
                 registry.getEndpoint(role, status.getLogicalIpPort()),
                 "the committed cursor has no endpoint");
-        WorkerStatus.PollLease lease = status.tryBeginStatusPoll();
+        WorkerStatus.PollLease lease = status.tryBeginStatusPoll(0L);
         assertNotNull(lease);
         EngineRpcService.WorkerStatusPB response =
                 EngineRpcService.WorkerStatusPB.newBuilder()
@@ -311,7 +311,7 @@ class GrpcWorkerStatusRunnerTest {
         org.flexlb.worker.status.RunnerTestSupport.awaitCondition(
                 () -> registry.statusSnapshot(role).isEmpty());
         assertNull(
-                status.tryBeginStatusPoll(),
+                status.tryBeginStatusPoll(0L),
                 "a missing committed endpoint retires its status generation");
         assertNull(registry.getEndpoint(role, status.getLogicalIpPort()));
     }
@@ -332,7 +332,7 @@ class GrpcWorkerStatusRunnerTest {
                     registry, RoleType.PREFILL, status.getLogicalIpPort(), status);
         }
         var committed = status.committedWorkerStatus();
-        WorkerStatus.PollLease lease = status.tryBeginStatusPoll();
+        WorkerStatus.PollLease lease = status.tryBeginStatusPoll(0L);
         assertNotNull(lease);
         // Both protocol fields agree: rejection must enforce discovery identity, not converter
         // validation.
@@ -365,7 +365,7 @@ class GrpcWorkerStatusRunnerTest {
                 "rejected role must not advance fields or cursors");
         assertEquals(RoleType.PREFILL, status.getRole());
         assertFalse(status.isActiveGeneration());
-        assertNull(status.tryBeginStatusPoll(), "retired generation cannot poll again");
+        assertNull(status.tryBeginStatusPoll(0L), "retired generation cannot poll again");
         org.flexlb.worker.status.RunnerTestSupport.awaitCondition(
                 () -> registry.statusSnapshot(RoleType.PREFILL).isEmpty());
         assertTrue(registry.statusSnapshot(RoleType.DECODE).isEmpty());

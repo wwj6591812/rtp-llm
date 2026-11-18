@@ -13,6 +13,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
+
 /**
  * Shared fixtures for exact endpoint and resource ownership contracts.
  */
@@ -330,12 +332,12 @@ public final class EndpointTestSupport {
     }
 
     public static WorkerStatus workerStatus(RoleType role, String ip, int port, int grpcPort) {
-        return WorkerStatus.createDiscovered(role, null, ip, port, grpcPort, null);
+        return createDiscovered(role, null, ip, port, grpcPort, null);
     }
 
     public static WorkerStatus workerStatus(
             RoleType role, String group, String ip, int port, int grpcPort, String site) {
-        return WorkerStatus.createDiscovered(role, group, ip, port, grpcPort, site);
+        return createDiscovered(role, group, ip, port, grpcPort, site);
     }
 
     public static Runnable applyStatus(WorkerEndpoint endpoint, WorkerStatusResponse response) {

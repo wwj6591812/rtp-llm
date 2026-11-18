@@ -21,6 +21,7 @@ import static org.flexlb.util.metrics.MetricConstant.CACHE_ENGINE_LOCAL_BYTES;
 import static org.flexlb.util.metrics.MetricConstant.CACHE_ENGINE_LOCAL_COUNT;
 import static org.flexlb.util.metrics.MetricConstant.CACHE_ENGINE_VIEWS_MAP_SIZE;
 import static org.flexlb.util.metrics.MetricConstant.CACHE_GLOBAL_TOTAL_COUNT;
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -289,7 +290,7 @@ class KvCacheManagerRetirementTest {
     private static org.flexlb.worker.status.WorkerStatus worker(String address) {
         address = address.replace("@0", "");
         int separator = address.lastIndexOf(':');
-        return org.flexlb.worker.status.WorkerStatus.createDiscovered(
+        return createDiscovered(
                 org.flexlb.config.service.RoleType.PREFILL,
                 null,
                 address.substring(0, separator),

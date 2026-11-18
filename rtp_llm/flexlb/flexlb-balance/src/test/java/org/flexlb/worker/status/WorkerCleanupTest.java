@@ -17,6 +17,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -203,7 +204,6 @@ class WorkerCleanupTest {
     }
 
     private static WorkerStatus status(String ip, int port) {
-        return WorkerStatus.createDiscovered(
-                RoleType.PREFILL, null, ip, port, port + 1, "test-site");
+        return createDiscovered(RoleType.PREFILL, null, ip, port, port + 1, "test-site");
     }
 }

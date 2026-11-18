@@ -7,13 +7,13 @@ import org.flexlb.worker.endpoint.CapacityNotifier;
 import org.flexlb.worker.endpoint.EncoderEndpoint;
 import org.flexlb.worker.endpoint.EndpointRegistry;
 import org.flexlb.worker.endpoint.WorkerEndpoint;
-import org.flexlb.worker.status.WorkerStatus;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.List;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -103,9 +103,7 @@ class EncoderStrategyTest {
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void configuredLimitIsRecheckedAtRegistrationWithoutAScheduler(boolean capacityTaken) {
-        var status =
-                WorkerStatus.createDiscovered(
-                        RoleType.ENCODER, "group", "127.0.0.1", 8001, 8002, "test");
+        var status = createDiscovered(RoleType.ENCODER, "group", "127.0.0.1", 8001, 8002, "test");
         status.lock.lock();
         try {
             org.flexlb.worker.status.WorkerStatusTestSupport.recordSuccessfulPoll(status, true);
@@ -225,9 +223,7 @@ class EncoderStrategyTest {
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void registrationRechecksTheRequestedGroupAfterRanking(boolean movesToAnotherGroup) {
-        var status =
-                WorkerStatus.createDiscovered(
-                        RoleType.ENCODER, "g1", "127.0.0.1", 8001, 8002, "test");
+        var status = createDiscovered(RoleType.ENCODER, "g1", "127.0.0.1", 8001, 8002, "test");
         status.lock.lock();
         try {
             org.flexlb.worker.status.WorkerStatusTestSupport.recordSuccessfulPoll(status, true);
@@ -250,7 +246,8 @@ class EncoderStrategyTest {
                             if (movesToAnotherGroup) {
                                 status.lock.lock();
                                 try {
-                                    status.updateDiscoveryLabels("test", "g2");
+                                    status.updateDiscoveryLabels(
+                                            "test", "g2", status.getDeploymentName());
                                 } finally {
                                     status.lock.unlock();
                                 }
@@ -285,9 +282,7 @@ class EncoderStrategyTest {
     }
 
     private static EncoderEndpoint liveEndpoint(String address) {
-        var status =
-                WorkerStatus.createDiscovered(
-                        RoleType.ENCODER, "group", address, 8001, 8002, "test");
+        var status = createDiscovered(RoleType.ENCODER, "group", address, 8001, 8002, "test");
         status.lock.lock();
         try {
             org.flexlb.worker.status.WorkerStatusTestSupport.recordSuccessfulPoll(status, true);

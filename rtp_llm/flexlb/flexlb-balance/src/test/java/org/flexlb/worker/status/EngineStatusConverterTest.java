@@ -11,6 +11,7 @@ import java.io.ByteArrayOutputStream;
 import java.util.List;
 import java.util.Set;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -21,8 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class EngineStatusConverterTest {
 
     private final WorkerStatus owner =
-            WorkerStatus.createDiscovered(
-                    RoleType.PREFILL, "default", "127.0.0.1", 8001, 18002, "test");
+            createDiscovered(RoleType.PREFILL, "default", "127.0.0.1", 8001, 18002, "test");
 
     @Test
     void preservesAllActiveTaskPhasesAndKeepsFinishedTasksSeparate() {

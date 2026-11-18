@@ -6,9 +6,9 @@ import org.flexlb.config.service.RoleType;
 import org.flexlb.worker.endpoint.CapacityKey;
 import org.flexlb.worker.endpoint.EndpointTestSupport;
 import org.flexlb.worker.status.DebugInfo;
-import org.flexlb.worker.status.WorkerStatus;
 import org.junit.jupiter.api.Test;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -22,9 +22,7 @@ class RequestRouteStateTest {
     @Test
     void frozenSelectionSurvivesInputResponseAndEndpointChanges() {
         var context = RequestProtocolTestSupport.context(SchedulingTestConfig.newConfig(), 42L);
-        var status =
-                WorkerStatus.createDiscovered(
-                        RoleType.PREFILL, "original", "chosen", 8080, 8090, null);
+        var status = createDiscovered(RoleType.PREFILL, "original", "chosen", 8080, 8090, null);
         var endpoint =
                 EndpointTestSupport.realPrefill(
                         status,

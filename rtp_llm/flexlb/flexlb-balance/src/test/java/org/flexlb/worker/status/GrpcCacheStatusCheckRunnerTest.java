@@ -59,7 +59,7 @@ class GrpcCacheStatusCheckRunnerTest {
         new GrpcCacheStatusCheckRunner(
                         "test-model",
                         status,
-                        status.tryBeginCachePoll(),
+                        status.tryBeginCachePoll(0L),
                         directory(status),
                         serviceMetricsReporter,
                         workerStatusRpcClient,
@@ -103,7 +103,7 @@ class GrpcCacheStatusCheckRunnerTest {
                 new GrpcCacheStatusCheckRunner(
                         modelName,
                         workerStatus,
-                        workerStatus.tryBeginCachePoll(),
+                        workerStatus.tryBeginCachePoll(0L),
                         directory,
                         serviceMetricsReporter,
                         workerStatusRpcClient,
@@ -188,7 +188,7 @@ class GrpcCacheStatusCheckRunnerTest {
                 new GrpcCacheStatusCheckRunner(
                         "test-model",
                         oldStatus,
-                        oldStatus.tryBeginCachePoll(),
+                        oldStatus.tryBeginCachePoll(0L),
                         directory,
                         serviceMetricsReporter,
                         workerStatusRpcClient,
@@ -215,7 +215,7 @@ class GrpcCacheStatusCheckRunnerTest {
         new GrpcCacheStatusCheckRunner(
                         "test-model",
                         workerStatus,
-                        workerStatus.tryBeginCachePoll(),
+                        workerStatus.tryBeginCachePoll(0L),
                         directory,
                         serviceMetricsReporter,
                         workerStatusRpcClient,

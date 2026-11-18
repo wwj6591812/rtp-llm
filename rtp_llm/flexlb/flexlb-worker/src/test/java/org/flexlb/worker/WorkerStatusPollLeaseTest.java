@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.locks.LockSupport;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -19,27 +20,27 @@ class WorkerStatusPollLeaseTest {
     @Test
     void staleCloseCannotReleaseTheNextStatusPoll() {
         WorkerStatus status = workerStatus();
-        WorkerStatus.PollLease first = status.tryBeginStatusPoll();
+        WorkerStatus.PollLease first = status.tryBeginStatusPoll(0L);
         assertNotNull(first);
         first.close();
 
-        WorkerStatus.PollLease second = status.tryBeginStatusPoll();
+        WorkerStatus.PollLease second = status.tryBeginStatusPoll(0L);
         assertNotNull(second);
         first.close();
 
-        assertNull(status.tryBeginStatusPoll());
+        assertNull(status.tryBeginStatusPoll(0L));
         second.close();
-        assertNotNull(status.tryBeginStatusPoll());
+        assertNotNull(status.tryBeginStatusPoll(0L));
     }
 
     @Test
     void statusAndCacheLeasesAreIndependent() {
         WorkerStatus status = workerStatus();
 
-        assertNotNull(status.tryBeginStatusPoll());
-        assertNotNull(status.tryBeginCachePoll());
-        assertNull(status.tryBeginStatusPoll());
-        assertNull(status.tryBeginCachePoll());
+        assertNotNull(status.tryBeginStatusPoll(0L));
+        assertNotNull(status.tryBeginCachePoll(0L));
+        assertNull(status.tryBeginStatusPoll(0L));
+        assertNull(status.tryBeginCachePoll(0L));
     }
 
     @Test
@@ -53,7 +54,6 @@ class WorkerStatusPollLeaseTest {
     }
 
     private static WorkerStatus workerStatus() {
-        return WorkerStatus.createDiscovered(
-                RoleType.PREFILL, null, "127.0.0.1", 8080, 8081, "test-site");
+        return createDiscovered(RoleType.PREFILL, null, "127.0.0.1", 8080, 8081, "test-site");
     }
 }

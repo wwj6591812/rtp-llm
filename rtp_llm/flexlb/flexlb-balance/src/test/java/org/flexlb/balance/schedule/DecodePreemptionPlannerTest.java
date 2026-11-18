@@ -22,6 +22,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -159,7 +160,7 @@ class DecodePreemptionPlannerTest {
                         0L,
                         Math.max(0L, realKvTotal - realKvAvailable));
         WorkerStatus status =
-                WorkerStatus.createDiscovered(
+                createDiscovered(
                         org.flexlb.config.service.RoleType.DECODE,
                         "default",
                         "decode-a",

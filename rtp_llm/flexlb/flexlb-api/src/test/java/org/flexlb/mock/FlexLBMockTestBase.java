@@ -42,6 +42,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -578,8 +579,7 @@ public abstract class FlexLBMockTestBase {
             long dpRank,
             long availableKv,
             long totalKv) {
-        WorkerStatus status =
-                WorkerStatus.createDiscovered(role, "test-group", ip, httpPort, grpcPort, null);
+        WorkerStatus status = createDiscovered(role, "test-group", ip, httpPort, grpcPort, null);
         WorkerStatusResponse initial = workerStatusResponse(role, dpRank, availableKv, totalKv, 1L);
         status.lock.lock();
         try {

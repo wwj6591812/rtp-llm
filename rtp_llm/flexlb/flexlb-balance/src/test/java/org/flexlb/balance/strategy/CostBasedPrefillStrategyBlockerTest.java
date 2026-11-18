@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.Map;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -227,9 +228,7 @@ class CostBasedPrefillStrategyBlockerTest {
     private static PrefillEndpoint input(String address, long work, long cap, String group) {
         var endpoint = mock(PrefillEndpoint.class);
         when(endpoint.ipPort()).thenReturn(address);
-        var status =
-                org.flexlb.worker.status.WorkerStatus.createDiscovered(
-                        RoleType.PREFILL, group, address, 1, 2, null);
+        var status = createDiscovered(RoleType.PREFILL, group, address, 1, 2, null);
         when(endpoint.getStatus()).thenReturn(status);
         when(endpoint.selectionSnapshot())
                 .thenReturn(

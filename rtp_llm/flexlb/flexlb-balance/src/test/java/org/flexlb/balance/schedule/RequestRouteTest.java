@@ -10,7 +10,6 @@ import org.flexlb.worker.endpoint.PrefillEndpoint;
 import org.flexlb.worker.endpoint.WorkerEndpoint;
 import org.flexlb.worker.status.DebugInfo;
 import org.flexlb.worker.status.ServerStatus;
-import org.flexlb.worker.status.WorkerStatus;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -18,6 +17,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.List;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -164,8 +164,7 @@ class RequestRouteTest {
             names = {"PREFILL", "PDFUSION", "DECODE", "ENCODER", "VIT"})
     void retirementBeforeOrAfterAddInvalidatesSelectionForEveryRole(RoleType role) {
         for (boolean retireBeforeAdd : List.of(false, true)) {
-            var status =
-                    WorkerStatus.createDiscovered(role, "original", "chosen", 8081, 8091, null);
+            var status = createDiscovered(role, "original", "chosen", 8081, 8091, null);
             WorkerEndpoint worker =
                     switch (role) {
                         case PREFILL, PDFUSION ->
@@ -208,12 +207,10 @@ class RequestRouteTest {
         var prefill = prefill();
         var decode =
                 org.flexlb.worker.endpoint.EndpointTestSupport.decode(
-                        WorkerStatus.createDiscovered(
-                                RoleType.DECODE, "original", "decode", 8080, 8090, null));
+                        createDiscovered(RoleType.DECODE, "original", "decode", 8080, 8090, null));
         var vit =
                 new WorkerEndpoint(
-                        WorkerStatus.createDiscovered(
-                                RoleType.VIT, "original", "vit", 8080, 8090, null));
+                        createDiscovered(RoleType.VIT, "original", "vit", 8080, 8090, null));
         var selectedWorkers = new java.util.ArrayList<WorkerEndpoint>();
         var roles = new java.util.ArrayList<RoleType>();
         try {
@@ -286,9 +283,7 @@ class RequestRouteTest {
     }
 
     private static PrefillEndpoint prefill() {
-        var status =
-                WorkerStatus.createDiscovered(
-                        RoleType.PREFILL, "original", "127.0.0.1", 8080, 8090, null);
+        var status = createDiscovered(RoleType.PREFILL, "original", "127.0.0.1", 8080, 8090, null);
         return org.flexlb.worker.endpoint.EndpointTestSupport.realPrefill(
                 status,
                 SchedulingTestConfig.newConfig(),

@@ -8,6 +8,7 @@ import org.flexlb.worker.status.WorkerStatus.StatusObservation;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -195,7 +196,7 @@ class WorkerStatusResponseTest {
 
     private static StatusObservation convert(EngineRpcService.WorkerStatusPB response) {
         WorkerStatus owner =
-                WorkerStatus.createDiscovered(
+                createDiscovered(
                         RoleType.PREFILL, "test-group", "127.0.0.1", 8080, 8081, "test-site");
         return WorkerStatusRpcClient.convertToStatusObservation(owner, response);
     }

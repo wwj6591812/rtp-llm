@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -103,9 +104,7 @@ class DirectRequestLifetimeRaceTest {
 
             when(prefill.confirmSelection(any(), any(), org.mockito.ArgumentMatchers.anyLong()))
                     .thenReturn(CommitStatus.COMMITTED);
-            var status =
-                    org.flexlb.worker.status.WorkerStatus.createDiscovered(
-                            RoleType.PDFUSION, null, "127.0.0.1", 8080, 8081, null);
+            var status = createDiscovered(RoleType.PDFUSION, null, "127.0.0.1", 8080, 8081, null);
             when(prefill.getStatus()).thenReturn(status);
             org.mockito.Mockito.doAnswer(
                             call ->

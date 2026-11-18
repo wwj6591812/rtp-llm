@@ -45,6 +45,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -1264,7 +1265,7 @@ class DirectAdmissionContractTest {
         }
 
         private static WorkerStatus worker(RoleType role, String ip) {
-            return WorkerStatus.createDiscovered(role, "g1", ip, 8080, 8081, "test");
+            return createDiscovered(role, "g1", ip, 8080, 8081, "test");
         }
 
         private static WorkerStatusResponse status(

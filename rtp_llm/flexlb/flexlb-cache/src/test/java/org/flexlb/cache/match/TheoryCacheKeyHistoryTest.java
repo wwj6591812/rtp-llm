@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.Mockito.mock;
@@ -49,7 +50,7 @@ class TheoryCacheKeyHistoryTest {
         when(provider.getWorkerStatuses(RoleType.PREFILL, null))
                 .thenReturn(
                         List.of(
-                                WorkerStatus.createDiscovered(
+                                createDiscovered(
                                         RoleType.PREFILL,
                                         null,
                                         "10.0.0.1",

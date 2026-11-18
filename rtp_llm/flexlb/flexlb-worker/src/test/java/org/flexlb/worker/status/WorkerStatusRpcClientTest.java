@@ -8,6 +8,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -21,9 +22,7 @@ class WorkerStatusRpcClientTest {
 
     @org.junit.jupiter.api.Test
     void detailedCountsRaiseIncompleteSummariesWithoutLoweringReportedOccupancy() {
-        var owner =
-                WorkerStatus.createDiscovered(
-                        RoleType.PREFILL, null, "127.0.0.1", 8080, 8081, null);
+        var owner = createDiscovered(RoleType.PREFILL, null, "127.0.0.1", 8080, 8081, null);
         var builder =
                 EngineRpcService.WorkerStatusPB.newBuilder()
                         .setRunningQueryLen(3)
