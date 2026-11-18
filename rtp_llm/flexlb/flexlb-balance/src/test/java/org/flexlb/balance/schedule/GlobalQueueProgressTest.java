@@ -16,6 +16,7 @@ import org.flexlb.worker.endpoint.CapacityNotifierTestSupport;
 import org.flexlb.worker.endpoint.DecodeEndpoint;
 import org.flexlb.worker.endpoint.DecodeResources;
 import org.flexlb.worker.endpoint.PrefillEndpoint;
+import org.flexlb.worker.endpoint.RequestCapacity;
 import org.flexlb.worker.endpoint.WorkerEndpoint;
 import org.flexlb.worker.status.ServerStatus;
 import org.flexlb.worker.status.WorkerStatus;
@@ -1183,6 +1184,40 @@ class GlobalQueueProgressTest {
                 SchedulingTestConfig.usePriorityQueue(config);
                 SchedulingTestConfig.allowVictim(config, PreemptionStage.DECODE_ENGINE_OWNED);
             }
+            when(router.requestCapacities())
+                    .thenAnswer(
+                            call -> {
+                                var observed = new java.util.HashSet<String>(groups.values());
+                                var result = new java.util.ArrayList<RequestCapacity>();
+                                for (var group : observed)
+                                    result.add(
+                                            new RequestCapacity(
+                                                    CapacityKey.exact(
+                                                            role,
+                                                            group,
+                                                            String.valueOf(group) + ":8000"),
+                                                    1L
+                                                            + Integer.toUnsignedLong(
+                                                                    java.util.Objects.hashCode(
+                                                                            group)),
+                                                    System.nanoTime(),
+                                                    "a".equals(group) ? aSlots.get() : 2));
+                                return result;
+                            });
+            when(router.requestCapacity(any()))
+                    .thenAnswer(
+                            call -> {
+                                WorkerEndpoint endpoint = call.getArgument(0);
+                                var status = endpoint.getStatus();
+                                return new RequestCapacity(
+                                        CapacityKey.exact(
+                                                status.getRole(),
+                                                status.getGroup(),
+                                                endpoint.ipPort()),
+                                        status.getGenerationId(),
+                                        System.nanoTime(),
+                                        "a".equals(status.getGroup()) ? aSlots.get() : 2);
+                            });
             ConfigService service = mock(ConfigService.class);
             when(service.loadBalanceConfig()).thenReturn(config);
             when(router.resolvePolicyGroup(any()))

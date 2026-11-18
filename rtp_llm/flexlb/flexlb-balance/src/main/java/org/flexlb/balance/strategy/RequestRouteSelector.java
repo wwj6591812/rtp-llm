@@ -13,6 +13,7 @@ import org.flexlb.util.Failures;
 import org.flexlb.util.Logger;
 import org.flexlb.worker.endpoint.CapacityKey;
 import org.flexlb.worker.endpoint.EndpointRegistry;
+import org.flexlb.worker.endpoint.RequestCapacity;
 import org.flexlb.worker.endpoint.StrategyErrorType;
 import org.flexlb.worker.endpoint.WorkerEndpoint;
 import org.flexlb.worker.status.ServerStatus;
@@ -52,6 +53,30 @@ public class RequestRouteSelector {
         this.requiredRoles =
                 List.copyOf(
                         Objects.requireNonNull(modelMetaConfig, "modelMetaConfig").requiredRoles());
+    }
+
+    public List<RequestCapacity> requestCapacities() {
+        var result = new ArrayList<RequestCapacity>();
+        for (var role : requiredRoles)
+            for (var endpoint : endpoints.<WorkerEndpoint>endpoints(role, null))
+                result.add(requestCapacity(endpoint));
+        return result;
+    }
+
+    public RequestCapacity requestCapacity(WorkerEndpoint endpoint) {
+        if (endpoint instanceof org.flexlb.worker.endpoint.PrefillEndpoint prefill)
+            return prefill.requestCapacity();
+        if (endpoint instanceof org.flexlb.worker.endpoint.DecodeEndpoint decode)
+            return decodeStrategy.requestCapacity(decode);
+        if (endpoint instanceof org.flexlb.worker.endpoint.EncoderEndpoint encoder)
+            return encoderStrategy.requestCapacity(encoder);
+        var status = endpoint.getStatus();
+        // VIT has no local request-count reservation; permit one availability probe.
+        return new RequestCapacity(
+                CapacityKey.exact(status.getRole(), status.getGroup(), endpoint.ipPort()),
+                status.getGenerationId(),
+                status.committedWorkerStatus().cursor().statusVersion(),
+                endpoint.acceptsNewRequests() ? 1L : 0L);
     }
 
     public SelectionResult<RequestRoute, CapacityKey> selectAndRegister(

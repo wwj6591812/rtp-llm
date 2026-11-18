@@ -14,6 +14,7 @@ import org.flexlb.worker.endpoint.DecodeEndpoint;
 import org.flexlb.worker.endpoint.DecodeResources;
 import org.flexlb.worker.endpoint.DecodeResources.AdmissionCapacity;
 import org.flexlb.worker.endpoint.EndpointRegistry;
+import org.flexlb.worker.endpoint.RequestCapacity;
 import org.flexlb.worker.endpoint.StrategyErrorType;
 import org.flexlb.worker.endpoint.WorkerEndpoint;
 
@@ -62,6 +63,19 @@ public class DecodeStrategy
                         .getDecode()
                         .getCostEstimator()
                         .compiledFormula();
+    }
+
+    public RequestCapacity requestCapacity(DecodeEndpoint endpoint) {
+        var snapshot = endpoint.selectionSnapshot();
+        long slots =
+                maxRequests == 0L
+                        ? Integer.MAX_VALUE
+                        : Math.max(0L, maxRequests - snapshot.usage().occupiedRequests());
+        return new RequestCapacity(
+                CapacityKey.exact(RoleType.DECODE, snapshot.topology().group(), snapshot.address()),
+                snapshot.generationId(),
+                snapshot.admissionVersion(),
+                endpoint.acceptsNewRequests() ? slots : 0L);
     }
 
     public Optional<DecodeEndpoint.SelectionSnapshot> chooseBest(

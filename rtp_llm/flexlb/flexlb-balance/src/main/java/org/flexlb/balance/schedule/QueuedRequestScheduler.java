@@ -14,6 +14,7 @@ import org.flexlb.config.FlexlbConfig;
 import org.flexlb.util.Failures;
 import org.flexlb.worker.endpoint.CapacityKey;
 import org.flexlb.worker.endpoint.CapacityNotifier;
+import org.flexlb.worker.endpoint.RequestCapacity;
 import org.flexlb.worker.endpoint.StrategyErrorType;
 
 import java.util.ArrayList;
@@ -84,9 +85,11 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
         this.capacityListener =
                 endpoint -> {
                     preemption.requestCheck(endpoint);
+                    var capacity = this.router.requestCapacity(endpoint);
                     lock.lock();
                     try {
-                        waitingRequests.capacityChanged();
+                        if (stopped) return;
+                        waitingRequests.capacityChanged(capacity);
                         changed.signal();
                     } finally {
                         lock.unlock();
@@ -265,6 +268,8 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
                         preemption.requestPeriodicCheck();
                         nextCheck = now + capacityCheckIntervalNanos;
                     }
+                    var capacities =
+                            periodicCheck ? capacitySnapshots() : List.<RequestCapacity>of();
                     var ready = preemption.readyWork();
                     var waiting = preemption.waitingRequests();
                     boolean preemptionIdle = preemption.isIdle();
@@ -273,7 +278,7 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
                     try {
                         if (stopped && executing.isEmpty() && preemptionIdle) return;
                         if (periodicCheck && !stopped) {
-                            waitingRequests.capacityChanged();
+                            waitingRequests.checkCapacity(capacities);
                             orderedQueue.beginScan();
                         }
                         tasks = chooseTasks(ready, waiting);
@@ -300,6 +305,16 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
         } finally {
             planners.shutdown();
         }
+    }
+
+    private List<RequestCapacity> capacitySnapshots() {
+        lock.lock();
+        try {
+            if (stopped || !waitingRequests.hasWaitingRequests()) return List.of();
+        } finally {
+            lock.unlock();
+        }
+        return router.requestCapacities();
     }
 
     private List<SchedulingTask> chooseTasks(

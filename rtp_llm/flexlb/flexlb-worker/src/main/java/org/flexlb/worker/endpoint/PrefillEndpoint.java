@@ -53,6 +53,21 @@ public class PrefillEndpoint extends WorkerEndpoint
         this.maxComputeTokens = config.getRouter().getRoles().getPrefill().getMaxComputeTokens();
     }
 
+    // Token headroom depends on the incoming request. Probe one request per observation.
+    public RequestCapacity requestCapacity() {
+        stateLock().lock();
+        try {
+            var status = getStatus();
+            return new RequestCapacity(
+                    CapacityKey.exact(status.getRole(), status.getGroup(), ipPort()),
+                    status.getGenerationId(),
+                    resourceVersion,
+                    acceptsNewRequests() ? 1L : 0L);
+        } finally {
+            stateLock().unlock();
+        }
+    }
+
     public PrefillEndpoint.SelectionSnapshot selectionSnapshot() {
         stateLock().lock();
         try {

@@ -1,5 +1,6 @@
 package org.flexlb.worker.endpoint;
 
+import org.flexlb.config.service.RoleType;
 import org.flexlb.util.Failures;
 import org.flexlb.worker.status.WorkerStatus;
 
@@ -17,11 +18,30 @@ import java.util.Map;
 public final class EncoderEndpoint extends WorkerEndpoint implements SelectionRollback {
     private Map<String, Tracked> requests = new HashMap<>();
 
+    private long capacityRevision;
+
     private final CapacityNotifier capacityNotifier;
 
     public EncoderEndpoint(WorkerStatus status, CapacityNotifier capacityNotifier) {
         super(status);
         this.capacityNotifier = capacityNotifier;
+    }
+
+    public RequestCapacity requestCapacity(int requestLimit) {
+        stateLock().lock();
+        try {
+            var snapshot = captureSelectionSnapshot(false);
+            var status = getStatus();
+            return new RequestCapacity(
+                    CapacityKey.exact(status.getRole(), snapshot.group(), ipPort()),
+                    status.getGenerationId(),
+                    capacityRevision,
+                    snapshot.available()
+                            ? Math.max(0L, requestLimit - snapshot.requestCount())
+                            : 0L);
+        } finally {
+            stateLock().unlock();
+        }
     }
 
     public SelectionSnapshot selectionSnapshot() {
@@ -61,6 +81,7 @@ public final class EncoderEndpoint extends WorkerEndpoint implements SelectionRo
                     || includeTokenWork && current.uncachedTokens() != expected.uncachedTokens())
                 return Registration.rejected(RegistrationStatus.VERSION_CONFLICT);
             var registration = new RequestRegistration(this, requestId, uncachedTokens);
+            capacityRevision++;
             requests.put(
                     requestId, new Tracked(registration, null, false, System.currentTimeMillis()));
             return new Registration<>(RegistrationStatus.REGISTERED, registration);
@@ -78,6 +99,7 @@ public final class EncoderEndpoint extends WorkerEndpoint implements SelectionRo
                     || entry.registration() != registration
                     || entry.phase() != RegistrationPhase.REGISTERED)
                 return CommitStatus.INVALID_REGISTRATION;
+            capacityRevision++;
             requests.put(
                     registration.requestId(),
                     new Tracked(
@@ -111,6 +133,7 @@ public final class EncoderEndpoint extends WorkerEndpoint implements SelectionRo
                 if (requests.get(entry.getKey()) == captured
                         && now - captured.lastObservedAtMs() > ttlMs) {
                     requests.remove(entry.getKey());
+                    capacityRevision++;
                     removed++;
                 }
             }
@@ -143,7 +166,7 @@ public final class EncoderEndpoint extends WorkerEndpoint implements SelectionRo
                                     publishWorkerRequest(
                                             request.registration(),
                                             request.events(),
-                                            org.flexlb.config.service.RoleType.ENCODER,
+                                            RoleType.ENCODER,
                                             request.kind(),
                                             request.errorCode(),
                                             ""));
@@ -153,6 +176,7 @@ public final class EncoderEndpoint extends WorkerEndpoint implements SelectionRo
 
     @Override
     protected StatusChange updateStatusLocked(WorkerStatus.StatusObservation observation) {
+        capacityRevision++;
         List<RequestStatus> changes = new ArrayList<>();
         var members = requests.entrySet().iterator();
         while (members.hasNext()) {
@@ -197,6 +221,7 @@ public final class EncoderEndpoint extends WorkerEndpoint implements SelectionRo
         try {
             var result = requests;
             requests = new HashMap<>();
+            capacityRevision++;
             retired = result;
         } finally {
             stateLock().unlock();
@@ -230,6 +255,7 @@ public final class EncoderEndpoint extends WorkerEndpoint implements SelectionRo
                     && current.registration() == registration
                     && (!requireUncommitted || current.phase() == RegistrationPhase.REGISTERED)) {
                 requests.remove(registration.requestId());
+                capacityRevision++;
                 removed = true;
             }
         } finally {

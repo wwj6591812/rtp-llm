@@ -14,7 +14,9 @@ import org.flexlb.worker.endpoint.CapacityKey;
 import org.flexlb.worker.endpoint.CapacityNotifier;
 import org.flexlb.worker.endpoint.CapacityNotifierTestSupport;
 import org.flexlb.worker.endpoint.PrefillEndpoint;
+import org.flexlb.worker.endpoint.RequestCapacity;
 import org.flexlb.worker.endpoint.StrategyErrorType;
+import org.flexlb.worker.endpoint.WorkerEndpoint;
 import org.flexlb.worker.status.ServerStatus;
 import org.flexlb.worker.status.WorkerStatus;
 import org.junit.jupiter.api.Test;
@@ -641,6 +643,18 @@ class RequestSchedulerTest {
 
     private static RequestRouteSelector mockRouter() {
         RequestRouteSelector router = mock(RequestRouteSelector.class);
+        when(router.requestCapacity(any()))
+                .thenAnswer(
+                        call -> {
+                            WorkerEndpoint worker = call.getArgument(0);
+                            var status = worker.getStatus();
+                            return new RequestCapacity(
+                                    CapacityKey.exact(
+                                            status.getRole(), status.getGroup(), worker.ipPort()),
+                                    status.getGenerationId(),
+                                    System.nanoTime(),
+                                    1L);
+                        });
         return router;
     }
 
@@ -734,6 +748,30 @@ class RequestSchedulerTest {
                 long capacityCheckIntervalMs) {
             this.slotsReleasedDuringPublication = slotsReleasedDuringPublication;
             this.pauseHeadRetry = pauseHeadRetry;
+            when(router.requestCapacities())
+                    .thenAnswer(
+                            call ->
+                                    List.of(
+                                            new RequestCapacity(
+                                                    key,
+                                                    1L,
+                                                    System.nanoTime(),
+                                                    availableSlots.get())));
+            org.mockito.Mockito.doAnswer(
+                            call -> {
+                                WorkerEndpoint worker = call.getArgument(0);
+                                var status = worker.getStatus();
+                                return new RequestCapacity(
+                                        CapacityKey.exact(
+                                                status.getRole(),
+                                                status.getGroup(),
+                                                worker.ipPort()),
+                                        status.getGenerationId(),
+                                        System.nanoTime(),
+                                        availableSlots.get());
+                            })
+                    .when(router)
+                    .requestCapacity(any());
             this.headFuture = headFuture;
             FlexlbConfig config = SchedulingTestConfig.newConfig();
             if (plannerThreads > 0) {
