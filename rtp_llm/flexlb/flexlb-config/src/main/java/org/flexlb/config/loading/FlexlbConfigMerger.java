@@ -15,7 +15,11 @@ import java.util.Set;
 public final class FlexlbConfigMerger {
 
     private static final Set<String> REPLACE_ON_TYPE_CHANGE_PATHS =
-            Set.of("cacheMatching", "consistency", "scheduler.ordering", "scheduler.decision");
+            Set.of(
+                    "cacheMatching",
+                    "consistency",
+                    "scheduler.ordering.policy",
+                    "router.roles.prefill.selection");
 
     private FlexlbConfigMerger() {}
 

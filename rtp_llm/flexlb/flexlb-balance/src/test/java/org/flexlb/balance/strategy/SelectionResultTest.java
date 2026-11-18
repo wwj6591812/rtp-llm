@@ -11,6 +11,22 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  */
 class SelectionResultTest {
     @Test
+    void retryHintsBelongToTheBlockedResultAndSurviveRouteFailurePropagation() {
+        var candidates = new java.util.HashSet<Long>();
+        candidates.add(7L);
+        var blocked = SelectionResult.blocked(new Object()).withCandidates(candidates);
+        candidates.clear();
+        org.junit.jupiter.api.Assertions.assertEquals(
+                java.util.Set.of(7L), blocked.candidateGenerations());
+        assertSame(blocked, blocked.asFailure());
+        assertThrows(
+                UnsupportedOperationException.class, () -> blocked.candidateGenerations().clear());
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> SelectionResult.success(new Object()).withCandidates(java.util.Set.of(7L)));
+    }
+
+    @Test
     void factoriesCannotCreateResultsMissingTheirRequiredPayload() {
         assertThrows(IllegalArgumentException.class, () -> SelectionResult.success(null));
         assertThrows(IllegalArgumentException.class, () -> SelectionResult.rejected(null));

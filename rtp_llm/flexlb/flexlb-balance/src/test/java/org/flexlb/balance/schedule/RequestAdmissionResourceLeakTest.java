@@ -248,7 +248,7 @@ class RequestAdmissionResourceLeakTest {
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.MethodSource("publicationCancellationCases")
     void cancellationAtEveryPublicationOutcomeSettlesTheOriginalRequest(
-            String publicationOutcome, CancelReason reason, boolean inactivityExpired)
+            String publicationOutcome, CancelReason reason, boolean dispatchExpired)
             throws Exception {
         Registered registered = registerItem(71L);
         var decodeRegistration = registered.item().decodeRegistration();
@@ -262,9 +262,10 @@ class RequestAdmissionResourceLeakTest {
                             () -> {
                                 org.junit.jupiter.api.Assertions.assertFalse(
                                         Thread.holdsLock(context));
-                                if (inactivityExpired) {
-                                    RequestProtocolTestSupport.expireInactiveRequest(
-                                            lifecycle, context, Long.MAX_VALUE);
+                                if (dispatchExpired) {
+                                    lifecycle.onDeadline(
+                                            context.snapshot().deadlines().request(),
+                                            Long.MAX_VALUE);
                                 } else {
                                     lifecycle.cancel("71", reason);
                                 }

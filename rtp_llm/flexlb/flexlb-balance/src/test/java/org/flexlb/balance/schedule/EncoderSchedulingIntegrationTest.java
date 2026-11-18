@@ -243,6 +243,21 @@ class EncoderSchedulingIntegrationTest {
     }
 
     @Test
+    void committedEncoderCancellationDoesNotStartPrefillCancelRpc() throws Exception {
+        worker("encoder", 8001, true, "group", Map.of(), 0, 0);
+        var context = context("encoder-cancel", 100, 0L);
+        assertTrue(lifecycle.submit(context).get(2, TimeUnit.SECONDS).isSuccess());
+        var cancellations = mock(EngineCancellation.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(
+                lifecycle, "engineCancellation", cancellations);
+        lifecycle.cancel(context, CancelReason.CLIENT_CANCELLED);
+        RequestProtocolTestSupport.awaitCondition(
+                () -> context.snapshot().phase() == RequestContext.Phase.CLOSED);
+        org.mockito.Mockito.verify(cancellations, org.mockito.Mockito.never())
+                .stop(any(), any(), any());
+    }
+
+    @Test
     void queueLimitsEachEncoderAndResumesAfterWorkerFinished() throws Exception {
         configure(true, 1, List.of(RoleType.ENCODER));
         var first = worker("first", 8001, true, "group", Map.of(), 0, 0);

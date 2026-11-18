@@ -320,6 +320,7 @@ class RequestContextConcurrencyTest {
     @Test
     void expiredSelectionCannotChooseASuccessResponse() {
         var context = request();
+        context.setSchedulingMetadata(SchedulingMetadata.of(50, null, 61000L, 50));
         var attempt = context.beginRouteSelection();
         var route = acquiredRoute(context, attempt);
         assertFalse(

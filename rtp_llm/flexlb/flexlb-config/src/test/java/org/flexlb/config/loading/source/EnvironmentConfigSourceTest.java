@@ -25,7 +25,7 @@ class EnvironmentConfigSourceTest {
                         "FLEXLB_CONFIG",
                         """
                         {
-                          "schemaVersion":4,"requestLifecycle":{"request":{"timeoutMs":60000}},
+                          "schemaVersion":5,"requestLifecycle":{"inactivityTimeoutMs": 60000},
                           "scheduler":{"type":"DIRECT"},
 
                           "observability":{"logging":{

@@ -54,7 +54,7 @@ class ConfigSourceSelectionTest {
                 .thenAnswer(
                         invocation ->
                                 "legacy-role".equals(invocation.getArgument(0))
-                                        ? "{\"schemaVersion\":4,\"enableFallback\":true}"
+                                        ? "{\"schemaVersion\":5,\"enableFallback\":true}"
                                         : missingConfig);
 
         try (MockedStatic<NacosFactory> factory = mockStatic(NacosFactory.class)) {
@@ -74,7 +74,7 @@ class ConfigSourceSelectionTest {
                             "ZONE_NAME",
                             "master",
                             "FLEXLB_CONFIG",
-                            "{\"schemaVersion\":4,\"enableFallback\":true}")
+                            "{\"schemaVersion\":5,\"enableFallback\":true}")
                     .remove(NACOS_DATA_ID)
                     .remove(NACOS_GROUP)
                     .remove(SPECTRUM_WORKSPACE_ID)
@@ -108,7 +108,7 @@ class ConfigSourceSelectionTest {
     void environmentSourceDoesNotRequireDeploymentIdentity() throws Exception {
         new EnvironmentVariables(
                         "FLEXLB_UNICONF_ENABLE", "false",
-                        "FLEXLB_CONFIG", "{\"schemaVersion\":4,\"enableFallback\":true}")
+                        "FLEXLB_CONFIG", "{\"schemaVersion\":5,\"enableFallback\":true}")
                 .remove(NACOS_SERVER_ADDR)
                 .remove(WHALE_BIZ_NAME)
                 .remove(WHALE_DEPLOYMENT_NAME)

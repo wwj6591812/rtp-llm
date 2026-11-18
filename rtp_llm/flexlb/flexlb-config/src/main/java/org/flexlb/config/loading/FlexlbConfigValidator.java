@@ -49,6 +49,28 @@ public final class FlexlbConfigValidator {
             }
         }
 
+        var selection = document.path("router").path("roles").path("prefill").path("selection");
+        if (selection.isObject()) {
+            var type =
+                    effectiveDocument
+                            .path("router")
+                            .path("roles")
+                            .path("prefill")
+                            .path("selection")
+                            .path("type")
+                            .asText("COST_BASED");
+            if ("TOKEN_BALANCE".equals(type))
+                rejectFieldsExcept(
+                        selection, "router.roles.prefill.selection", "type", "minPrefixHitPercent");
+            else if ("COST_BASED".equals(type))
+                rejectFieldsExcept(
+                        selection,
+                        "router.roles.prefill.selection",
+                        "type",
+                        "costExpression",
+                        "cacheAffinity");
+        }
+
         JsonNode decodeCostEstimator =
                 document.path("router").path("roles").path("decode").path("costEstimator");
         if (decodeCostEstimator.isObject() && decodeCostEstimator.has("expression")) {
@@ -107,13 +129,22 @@ public final class FlexlbConfigValidator {
         if (!ordering.isObject()) {
             return;
         }
-        String type = effectiveOrdering.path("type").asText("FIFO");
-        if ("FIFO".equals(type)) {
-            rejectFieldsExcept(ordering, "scheduler.ordering", "type");
-        } else if ("PRIORITY".equals(type)) {
-            rejectFieldsExcept(
-                    ordering, "scheduler.ordering", "type", "defaultPriority", "preemption");
-            validatePreemptionShape(ordering.path("preemption"));
+        rejectFieldsExcept(ordering, "scheduler.ordering", "priority", "policy");
+        var priority = ordering.path("priority");
+        if (priority.isObject()) {
+            boolean enabled = effectiveOrdering.path("priority").path("enabled").asBoolean(false);
+            if (enabled) {
+                rejectFieldsExcept(
+                        priority,
+                        "scheduler.ordering.priority",
+                        "enabled",
+                        "defaultPriority",
+                        "preemption");
+                validatePreemptionShape(priority.path("preemption"));
+            } else {
+                rejectFieldsExcept(
+                        priority, "scheduler.ordering.priority", "enabled", "defaultPriority");
+            }
         }
     }
 
@@ -141,7 +172,7 @@ public final class FlexlbConfigValidator {
             }
         }
         throw new ConfigValidationException(
-                "scheduler.ordering.preemption.timeoutMs",
+                "scheduler.ordering.priority.preemption.timeoutMs",
                 "is supported only when DECODE_ENGINE_OWNED is enabled");
     }
 
@@ -173,7 +204,6 @@ public final class FlexlbConfigValidator {
     }
 
     private static void validateQueue(SchedulerConfig queue) {
-        positive(queue.getQueueTimeoutMs(), "scheduler.queueTimeoutMs");
         positive(queue.getCapacityCheckIntervalMs(), "scheduler.capacityCheckIntervalMs");
         require(
                 Double.isFinite(queue.getScanBudgetMultiplier())
@@ -182,26 +212,32 @@ public final class FlexlbConfigValidator {
                 "must be finite and at least 1.0");
         require(queue.getOrdering() != null, "scheduler.ordering", "is required for QUEUE");
         QueueOrderingConfig ordering = queue.getOrdering();
-        require(ordering.getType() != null, "scheduler.ordering.type", "is required");
-        if (ordering.getType() == QueueOrderingConfig.Type.PRIORITY) {
+        require(ordering.getPriority() != null, "scheduler.ordering.priority", "is required");
+        require(
+                ordering.getPolicy() != null && ordering.getPolicy().getType() != null,
+                "scheduler.ordering.policy.type",
+                "is required");
+        if (ordering.getPriority().isEnabled()) {
             range(
-                    ordering.getDefaultPriority(),
+                    ordering.getPriority().getDefaultPriority(),
                     PriorityNormalizer.MIN_PRIORITY,
                     PriorityNormalizer.MAX_PRIORITY,
-                    "scheduler.ordering.defaultPriority");
-            PreemptionConfig preemption = ordering.getPreemption();
+                    "scheduler.ordering.priority.defaultPriority");
+            PreemptionConfig preemption = ordering.getPriority().getPreemption();
             if (preemption != null) {
                 require(
                         preemption.getAllowedPreemptionStages() != null
                                 && !preemption.getAllowedPreemptionStages().isEmpty(),
-                        "scheduler.ordering.preemption.allowedVictimStages",
+                        "scheduler.ordering.priority.preemption.allowedVictimStages",
                         "must contain at least one stage when preemption is configured");
-                positive(preemption.getTimeoutMs(), "scheduler.ordering.preemption.timeoutMs");
+                positive(
+                        preemption.getTimeoutMs(),
+                        "scheduler.ordering.priority.preemption.timeoutMs");
             }
         } else {
             require(
-                    ordering.getPreemption() == null,
-                    "scheduler.ordering.preemption",
+                    ordering.getPriority().getPreemption() == null,
+                    "scheduler.ordering.priority.preemption",
                     "is supported only with PRIORITY");
         }
     }
@@ -228,31 +264,53 @@ public final class FlexlbConfigValidator {
                 "router.roles.encoder.maxRequests");
         PrefillConfig prefill = routing.getRoles().getPrefill();
         require(prefill != null, "router.roles.prefill", "is required");
-        positive(prefill.getMaxComputeTokens(), "router.roles.prefill.maxComputeTokens");
+        require(prefill.getSelection() != null, "router.roles.prefill.selection", "is required");
+        require(
+                prefill.getSelection().getType() != null,
+                "router.roles.prefill.selection.type",
+                "is required");
+        require(prefill.getAdmission() != null, "router.roles.prefill.admission", "is required");
+        positive(
+                prefill.getAdmission().getMaxInflightRequests(),
+                "router.roles.prefill.admission.maxInflightRequests");
+        range(prefill.getRemoteDiscount(), 0, 1, "router.roles.prefill.remoteDiscount");
+        range(
+                prefill.getSelection().getMinPrefixHitPercent(),
+                0,
+                100,
+                "router.roles.prefill.selection.minPrefixHitPercent");
+        var queue = prefill.getAdmission().getEngineQueue();
+        if (queue != null) {
+            require(
+                    prefill.getSelection().getType()
+                            == RoutingConfig.PrefillSelectionType.TOKEN_BALANCE,
+                    "router.roles.prefill.admission.engineQueue",
+                    "requires TOKEN_BALANCE");
+            nonNegative(
+                    queue.getWaitingThreshold(),
+                    "router.roles.prefill.admission.engineQueue.waitingThreshold");
+        }
+        if (prefill.getSelection().getType() == RoutingConfig.PrefillSelectionType.TOKEN_BALANCE)
+            require(
+                    prefill.getSelection().getCacheAffinity() == null,
+                    "router.roles.prefill.selection.cacheAffinity",
+                    "requires COST_BASED");
         try {
-            new org.flexlb.util.formula.PrefillTimePredictor(prefill.getCostExpression());
+            new org.flexlb.util.formula.PrefillTimePredictor(
+                    prefill.getSelection().getCostExpression());
         } catch (IllegalArgumentException error) {
             throw new ConfigValidationException(
-                    "router.roles.prefill.costExpression",
+                    "router.roles.prefill.selection.costExpression",
                     "contains an invalid formula: " + error.getMessage(),
                     error);
         }
-        CacheAffinityConfig affinity = prefill.getCacheAffinity();
+        CacheAffinityConfig affinity = prefill.getSelection().getCacheAffinity();
         if (affinity != null) {
-            if (affinity.getMaxComputeTokens() != null)
-                positive(
-                        affinity.getMaxComputeTokens(),
-                        "router.roles.prefill.cacheAffinity.maxComputeTokens");
             range(
                     affinity.getMinPrefixHitPercent(),
                     0,
                     RoutingConfig.PERCENTAGE_SCALE,
-                    "router.roles.prefill.cacheAffinity.minPrefixHitPercent");
-            range(
-                    affinity.getRemoteDiscount(),
-                    0,
-                    1,
-                    "router.roles.prefill.cacheAffinity.remoteDiscount");
+                    "router.roles.prefill.selection.cacheAffinity.minPrefixHitPercent");
         }
 
         require(routing.getRoles().getDecode() != null, "router.roles.decode", "is required");
@@ -295,16 +353,19 @@ public final class FlexlbConfigValidator {
         }
     }
 
-    private static void validateRequestLifecycle(RequestLifecycleConfig lifecycle) {
-        require(lifecycle != null, "requestLifecycle", "is required");
-        require(lifecycle.getRequest() != null, "requestLifecycle.request", "is required");
-        requiredPositive(
-                lifecycle.getRequest().getTimeoutMs(), "requestLifecycle.request.timeoutMs");
+    private static void nonNegative(long value, String field) {
+        require(value >= 0, field, "must be non-negative");
     }
 
-    private static void requiredPositive(Long value, String field) {
-        require(value != null, field, "is required");
-        positive(value, field);
+    private static void validateRequestLifecycle(RequestLifecycleConfig lifecycle) {
+        require(lifecycle != null, "requestLifecycle", "is required");
+        positive(lifecycle.getDispatchTimeoutMs(), "requestLifecycle.dispatchTimeoutMs");
+        positive(lifecycle.getInactivityTimeoutMs(), "requestLifecycle.inactivityTimeoutMs");
+        require(
+                Double.isFinite(lifecycle.getEngineVisibilityMultiplier())
+                        && lifecycle.getEngineVisibilityMultiplier() >= 1.0,
+                "requestLifecycle.engineVisibilityMultiplier",
+                "must be finite and at least 1.0");
     }
 
     private static void validateWorkerRegistry(WorkerRegistryConfig workers) {
@@ -383,10 +444,6 @@ public final class FlexlbConfigValidator {
                 "cacheMatching.localStandby",
                 "is required for KVCM");
         validateLocalStandby(kvcm.getLocalStandby());
-    }
-
-    private static void nonNegative(long value, String field) {
-        require(value >= 0, field, "must be non-negative");
     }
 
     private static void validateLocalStandby(LocalStandbyConfig localStandby) {

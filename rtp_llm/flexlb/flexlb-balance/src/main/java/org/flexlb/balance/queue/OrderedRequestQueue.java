@@ -14,7 +14,7 @@ import java.util.function.Predicate;
 import static com.google.common.base.Preconditions.checkState;
 
 /**
- * FIFO or fixed-range PRIORITY index for the model queue.
+ * Maintains the model queue with optional priority buckets and a separate FIFO or Prefill-cost order.
  *
  * <p>The QueuedRequestScheduler lock is the sole synchronization boundary. Private
  * nodes let completion and cancellation unlink an arbitrary request
@@ -26,6 +26,7 @@ public final class OrderedRequestQueue implements SchedulingQueue {
 
     private final boolean priorityOrdering;
 
+    private final PrefillCostOrder costOrder;
     private final Comparator<RequestContext> order;
     private final Bucket[] buckets;
     private final BitSet pendingPriorities = new BitSet(PRIORITY_LEVELS);
@@ -35,6 +36,10 @@ public final class OrderedRequestQueue implements SchedulingQueue {
     private long nextSequence;
 
     public OrderedRequestQueue(boolean priorityOrdering) {
+        this(priorityOrdering, false);
+    }
+
+    public OrderedRequestQueue(boolean priorityOrdering, boolean costOrder) {
         this.priorityOrdering = priorityOrdering;
         this.order =
                 priorityOrdering
@@ -43,6 +48,7 @@ public final class OrderedRequestQueue implements SchedulingQueue {
                                 .thenComparingLong(RequestContext::getPlacementSequence)
                         : Comparator.comparingLong(RequestContext::getPlacementSequence);
         this.buckets = new Bucket[priorityOrdering ? PRIORITY_LEVELS : 1];
+        this.costOrder = costOrder ? new PrefillCostOrder(priorityOrdering, order) : null;
     }
 
     public void add(RequestContext request) {
@@ -78,8 +84,10 @@ public final class OrderedRequestQueue implements SchedulingQueue {
         if (candidateLimit <= 0 || scanBudget <= 0) {
             return List.of();
         }
-        List<RequestContext> result = new ArrayList<>(Math.min(candidateLimit, members.size()));
-        for (int checked = 0; checked < scanBudget && result.size() < candidateLimit; checked++) {
+        int scanLimit = costOrder == null ? candidateLimit : scanBudget;
+        List<RequestContext> result = new ArrayList<>(Math.min(scanLimit, members.size()));
+        int checked = 0;
+        for (; checked < scanBudget && result.size() < scanLimit; checked++) {
             int index = pendingPriorities.previousSetBit(buckets.length - 1);
             if (index < 0) break;
             Node entry = buckets[index].nextToScan;
@@ -90,7 +98,18 @@ public final class OrderedRequestQueue implements SchedulingQueue {
             }
         }
         result.sort(order);
-        return result;
+        return costOrder == null
+                ? result
+                : costOrder.select(
+                        result,
+                        pendingPriorities.isEmpty(),
+                        candidateLimit,
+                        scanBudget - checked,
+                        eligible);
+    }
+
+    public boolean hasUnscannedRequests() {
+        return !pendingPriorities.isEmpty() || costOrder != null && costOrder.hasPendingSelection();
     }
 
     public void beginScan() {
@@ -100,23 +119,6 @@ public final class OrderedRequestQueue implements SchedulingQueue {
             bucket.nextToScan = bucket.head;
             pendingPriorities.set(index, bucket.head != null);
         }
-    }
-
-    public void retry(RequestContext request) {
-        var entry = members.get(request);
-        if (entry == null) return;
-        int index = bucketIndex(request);
-        var bucket = buckets[index];
-        if (bucket.nextToScan == null
-                || request.getPlacementSequence()
-                        < bucket.nextToScan.request.getPlacementSequence()) {
-            bucket.nextToScan = entry;
-        }
-        pendingPriorities.set(index);
-    }
-
-    public boolean hasUnscannedRequests() {
-        return !pendingPriorities.isEmpty();
     }
 
     public List<RequestContext> drain() {
@@ -138,6 +140,7 @@ public final class OrderedRequestQueue implements SchedulingQueue {
     public boolean remove(RequestContext request) {
         Node entry = members.remove(request);
         if (entry == null) return false;
+        if (costOrder != null) costOrder.remove(request);
         int index = bucketIndex(request);
         Bucket bucket = buckets[index];
         bucket.remove(entry);
@@ -155,6 +158,25 @@ public final class OrderedRequestQueue implements SchedulingQueue {
         return order;
     }
 
+    @Override
+    public List<EstimateRequest> estimates(int limit) {
+        return costOrder == null ? List.of() : costOrder.estimates(limit);
+    }
+
+    public void retry(RequestContext request) {
+        if (costOrder != null) costOrder.finished(request);
+        var entry = members.get(request);
+        if (entry == null) return;
+        int index = bucketIndex(request);
+        var bucket = buckets[index];
+        if (bucket.nextToScan == null
+                || request.getPlacementSequence()
+                        < bucket.nextToScan.request.getPlacementSequence()) {
+            bucket.nextToScan = entry;
+        }
+        pendingPriorities.set(index);
+    }
+
     private void insert(RequestContext request, boolean restoring) {
         checkState(!members.containsKey(request), "request is already queued");
         Node entry = new Node(request);
@@ -163,6 +185,7 @@ public final class OrderedRequestQueue implements SchedulingQueue {
         if (bucket == null) buckets[index] = bucket = new Bucket();
         bucket.insert(entry, restoring);
         members.put(request, entry);
+        if (costOrder != null) costOrder.add(request);
         priorityCounts[SchedulingQueue.priority(request)]++;
         if (bucket.nextToScan == null
                 || request.getPlacementSequence()

@@ -55,6 +55,7 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
     private final CapacityNotifier.Listener capacityListener;
 
     private boolean started;
+    private boolean refreshBeforePlanning = true;
     private volatile boolean stopped;
 
     public QueuedRequestScheduler(
@@ -330,6 +331,22 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
             if (tasks.isEmpty()) tasks = new ArrayList<>();
             tasks.add(task);
         }
+        if (!stopped
+                && tasks.size() < slots
+                && (slots - tasks.size() > 1 || refreshBeforePlanning)) {
+            for (var ticket : orderedQueue.estimates(Math.max(1, (slots - tasks.size()) / 2))) {
+                var request = ticket.request();
+                if (executing.containsKey(request)) {
+                    ticket.complete(java.util.OptionalLong.empty());
+                    continue;
+                }
+                var task = new SchedulingTask(request, () -> refreshEstimate(ticket), null);
+                refreshBeforePlanning = false;
+                executing.put(request, task);
+                if (tasks.isEmpty()) tasks = new ArrayList<>();
+                tasks.add(task);
+            }
+        }
         int remaining = slots - tasks.size();
         if (!stopped && remaining > 0) {
             waitingRequests.resumeReady(
@@ -345,6 +362,8 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
                                     !executing.containsKey(request)
                                             && !waiting.contains(request)
                                             && !waitingRequests.isWaiting(request));
+            // Finish the budgeted scan before assigning the sole free slot to another refresh.
+            if (!orderedQueue.hasUnscannedRequests()) refreshBeforePlanning = true;
             for (var request : candidates) {
                 var task = new SchedulingTask(request, null, null);
                 executing.put(request, task);
@@ -353,6 +372,27 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
             }
         }
         return tasks;
+    }
+
+    private void refreshEstimate(SchedulingQueue.EstimateRequest ticket) {
+        java.util.OptionalLong estimate = java.util.OptionalLong.empty();
+        try {
+            if (!stopped && !ticket.request().isResponseDone())
+                estimate =
+                        java.util.Objects.requireNonNull(
+                                router.estimateQueuedTokens(
+                                        ticket.request(), ticket.request().getRoutingGroup()));
+        } catch (RuntimeException failure) {
+            org.flexlb.util.Logger.warn("Prefill ordering estimate unavailable", failure);
+        } finally {
+            lock.lock();
+            try {
+                ticket.complete(estimate);
+                changed.signal();
+            } finally {
+                lock.unlock();
+            }
+        }
     }
 
     private void submit(SchedulingTask task) {
@@ -387,6 +427,7 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
             lock.lock();
             try {
                 executing.remove(task.request, task);
+                orderedQueue.retry(task.request);
                 if (stopped
                         || orderedQueue.hasUnscannedRequests()
                         || waitingRequests.hasReadyRequests()) changed.signal();
@@ -487,7 +528,8 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
                 lock.lock();
                 try {
                     if (!stopped && orderedQueue.contains(request))
-                        waitingRequests.park(request, result.blocker());
+                        waitingRequests.park(
+                                request, result.blocker(), result.candidateGenerations());
                 } finally {
                     lock.unlock();
                 }

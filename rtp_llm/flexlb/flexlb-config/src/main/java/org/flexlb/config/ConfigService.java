@@ -76,7 +76,6 @@ public class ConfigService {
         }
         parsers.forEach(ConfigDocumentParserResolver::register);
         FlexlbConfig defaults = new FlexlbConfig();
-        defaults.getRequestLifecycle().getRequest().setTimeoutMs(300_000L);
         this.currentFlexlbConfig = new AtomicReference<>(defaults);
         this.currentModelServiceConfig = new AtomicReference<>();
         initializeConfigSources();
@@ -177,7 +176,7 @@ public class ConfigService {
                     "environment",
                     "Removed legacy FlexLB environment variables are no longer read: "
                             + String.join(", ", removed)
-                            + ". Migrate scheduling behavior into FLEXLB_CONFIG with schemaVersion 4."
+                            + ". Migrate scheduling behavior into FLEXLB_CONFIG with schemaVersion 5."
                             + " Configure metric exposure with --flexlb.monitor.metric-whitelist.");
         }
         return environment.get(FLEXLB_CONFIG_ENV);

@@ -307,15 +307,21 @@ public final class WorkerStatusSynchronizer {
                                 statusApplicationExecutor),
                 workerStatus.tryBeginStatusPoll(syncCycleId));
         if (flexlbConfig.isKvcmCacheMatching()) return;
+        boolean decode = workerStatus.getRole() == org.flexlb.config.service.RoleType.DECODE;
         long intervalCycles =
-                Math.max(
-                        1L, cacheIntervalService.getCurrentIntervalMs() / syncEngineStatusInterval);
+                decode
+                        ? 1L + 999L / syncEngineStatusInterval
+                        : Math.max(
+                                1L,
+                                cacheIntervalService.getCurrentIntervalMs()
+                                        / syncEngineStatusInterval);
         WorkerStatus.PollLease cacheLease = workerStatus.tryBeginCachePoll(syncCycleId);
         if (cacheLease == null) {
             return;
         }
-        if (workerStatus.getRole().requiresCacheKeys()
-                && !workerStatus.shouldPollCache(syncCycleId, intervalCycles)) {
+        if ((workerStatus.getRole().requiresCacheKeys() || decode)
+                && !workerStatus.shouldPollCache(syncCycleId, intervalCycles)
+                && !(decode && workerStatus.getCacheStatus() == null)) {
             cacheLease.close();
             return;
         }

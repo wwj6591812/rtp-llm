@@ -322,7 +322,7 @@ Scheduler 可以决定是否抢占，但抢占完成得到的准确预留由选�
 
 ## 2. 开工前必须完成
 
-1. 读 `AGENTS.md` 以及 `skills/flexlb-development/SKILL.md`、`skills/workflow-first-design/SKILL.md`、`skills/evidence-first-implementation/SKILL.md`，路径均相对 FlexLB 根目录。
+1. 读 `AGENTS.md` 以及 `skills/flexlb-development/SKILL.md`、`skills/workflow-first-design/SKILL.md`、`skills/class-implementation/SKILL.md`，路径均相对 FlexLB 根目录。
 2. 查看 `git status --short`、暂存与工作区差异。手册编写时 Endpoint、Dispatcher、策略、调度器、预测及测试已有大量未提交修改；不得覆盖、恢复或整体暂存别人的工作。
 3. 阅读当前架构文档 `docs/architecture/01-routing-and-balancing.md` 至 `05-lifecycle-and-consistency.md`，以及同目录 `flexlb-complexity-review.md`。历史提案与实际实现冲突时，以当前代码和已确认业务契约为依据。
 4. 重新定位本文符号和调用方，不依赖旧行号。记录当前 HEAD 和本阶段涉及的既有差异；不输出敏感配置。

@@ -118,6 +118,16 @@ public final class RequestRoute {
         return null;
     }
 
+    long predictedVisibilityAtMs(long nowMs) {
+        var endpoint = prefillEndpoint();
+        if (endpoint == null) return 0L;
+        var duration = endpoint.estimatedCompletionDurationMs(prefillRegistration(), nowMs);
+        if (duration.isEmpty()) return 0L;
+        return ctx.getConfig()
+                .getRequestLifecycle()
+                .visibilityDeadlineMs(nowMs, duration.getAsLong());
+    }
+
     WorkerEndpoint endpoint(RoleType role) {
         var selected = role(role);
         return selected == null ? null : selected.endpoint();

@@ -103,6 +103,28 @@ class RequestInactivityTest {
         assertEquals(2600L, context.snapshot().inactivityExpiresAtMs());
     }
 
+    @Test
+    void inactivityCancelsUnreleasedRoleAfterSuccessfulCompletion() {
+        var context = context();
+        var route = context.snapshot().route();
+        WorkerEventTestSupport.record(
+                context,
+                event(
+                        route,
+                        RoleType.DECODE,
+                        org.flexlb.worker.endpoint.RequestEventType.COMPLETED,
+                        1500L));
+        var completed = context.snapshot();
+        context.recordCleanupProgress(route, false, true, true, 1500L);
+        org.junit.jupiter.api.Assertions.assertTrue(context.snapshot().notificationsDone());
+        context.recordDeadline(context.snapshot().deadlines().inactivity(), 2500L, null);
+        assertSame(completed.endState(), context.snapshot().endState());
+        org.junit.jupiter.api.Assertions.assertNotNull(context.snapshot().cancellationReason());
+        org.junit.jupiter.api.Assertions.assertFalse(context.snapshot().notificationsDone());
+        org.junit.jupiter.api.Assertions.assertFalse(
+                context.snapshot().prefillWorkerReleaseConfirmed());
+    }
+
     private static RequestContext context() {
         var context = new RequestContext(new FlexlbConfig());
         context.setRequest(Request.builder().requestId("request").seqLen(100L).build());

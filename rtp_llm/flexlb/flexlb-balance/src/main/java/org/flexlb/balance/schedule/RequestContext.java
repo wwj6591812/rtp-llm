@@ -122,10 +122,7 @@ public final class RequestContext implements org.flexlb.worker.endpoint.WorkerRe
      * Captures a read-only view; the mutable facts exist only on this request.
      */
     public synchronized Snapshot snapshot() {
-        long inactivityAtMs =
-                saturatedAdd(
-                        Math.max(lastWorkerAtMs, Math.max(0L, routeCommittedAtMs)),
-                        inactivityTimeoutMs);
+        long inactivityAtMs = inactivityExpiresAtMs();
         return new Snapshot(
                 registeredRequestId,
                 originalNumericRequestId,
@@ -537,11 +534,15 @@ public final class RequestContext implements org.flexlb.worker.endpoint.WorkerRe
             if (!requestAlreadyCommitted) {
                 String detail =
                         inactive ? "request inactive" : "request scheduling deadline exceeded";
-                if (cancellationReason == null && endState == null)
+                if (cancellationReason == null && (endState == null || inactive)) {
+                    // A successful response can still be waiting for the other role to release.
+                    // Its inactivity deadline starts cancellation without changing that response.
+                    notificationsDone = false;
                     recordCancellation(
                             CancelReason.DEADLINE_EXCEEDED,
                             timeoutError,
                             diagnosis == null ? detail : diagnosis);
+                }
                 if (inactive || activeSelectionId != 0 || routeCommittedAtMs < 0 && !decodeAccepted)
                     return endRequest(
                             RequestEndEvent.failure(
@@ -585,9 +586,17 @@ public final class RequestContext implements org.flexlb.worker.endpoint.WorkerRe
             RequestRoute acquired,
             ResponseCompletionExecutor.Registration response,
             long nowMs) {
+        return tryCommitRoute(exact, acquired, response, nowMs, 0L);
+    }
+
+    synchronized boolean tryCommitRoute(
+            SelectionAttempt exact,
+            RequestRoute acquired,
+            ResponseCompletionExecutor.Registration response,
+            long nowMs,
+            long predictedVisibilityAtMs) {
         if (!canPublishRoute(exact) || route != acquired || responseForFuture != null) return false;
-        if (getRequestExpiresAtMs() > 0 && nowMs >= getRequestExpiresAtMs()
-                || nowMs >= inactivityExpiresAtMs()) {
+        if (getRequestExpiresAtMs() > 0 && nowMs >= getRequestExpiresAtMs()) {
             recordCancellation(
                     CancelReason.DEADLINE_EXCEEDED,
                     timeoutError,
@@ -595,9 +604,7 @@ public final class RequestContext implements org.flexlb.worker.endpoint.WorkerRe
             endRequest(
                     RequestEndEvent.failure(
                             route,
-                            nowMs >= inactivityExpiresAtMs()
-                                    ? EndCause.WORKER_REPORT_TIMEOUT
-                                    : EndCause.REQUEST_DEADLINE_EXCEEDED,
+                            EndCause.REQUEST_DEADLINE_EXCEEDED,
                             timeoutError,
                             cancellationDetail),
                     nowMs,
@@ -605,6 +612,7 @@ public final class RequestContext implements org.flexlb.worker.endpoint.WorkerRe
             return false;
         }
         routeCommittedAtMs = nowMs;
+        visibilityAtMs = predictedVisibilityAtMs;
         activeSelectionId = 0;
         revokeResourceWait();
         responseForFuture = response;
@@ -738,13 +746,16 @@ public final class RequestContext implements org.flexlb.worker.endpoint.WorkerRe
                             : 0;
             long visibilityAt = endState == null ? visibilityAtMs : 0;
             long inactivityAt =
-                    requestRecordForArchive != null || expired ? 0 : inactivityExpiresAtMs();
+                    requestRecordForArchive != null || expired || routeCommittedAtMs < 0
+                            ? 0
+                            : inactivityExpiresAtMs();
             deadlines = deadlines.schedule(this, requestAt, visibilityAt, inactivityAt);
         }
         updatedAtMs = Math.max(updatedAtMs, nowMs);
     }
 
     private long inactivityExpiresAtMs() {
+        if (routeCommittedAtMs < 0) return Long.MAX_VALUE;
         return saturatedAdd(
                 Math.max(lastWorkerAtMs, Math.max(0L, routeCommittedAtMs)), inactivityTimeoutMs);
     }

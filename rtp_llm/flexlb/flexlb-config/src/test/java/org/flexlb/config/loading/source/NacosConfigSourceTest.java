@@ -242,11 +242,11 @@ class NacosConfigSourceTest {
                                     .getValue()
                                     .receiveConfigInfo(
                                             """
-                            {"schemaVersion":4,"requestLifecycle":{"request":{"timeoutMs":60000}},"scheduler":{"type":"QUEUE"}}
+                            {"schemaVersion":5,"requestLifecycle":{"inactivityTimeoutMs": 60000},"scheduler":{"type":"QUEUE"}}
                             """);
 
                             assertThat(source.name()).isEqualTo("Nacos");
-                            assertThat(source.loadConfig().sourceSchemaVersion()).isEqualTo(4);
+                            assertThat(source.loadConfig().sourceSchemaVersion()).isEqualTo(5);
                             ConfigService configService =
                                     new ConfigService(
                                             List.of(
@@ -266,7 +266,7 @@ class NacosConfigSourceTest {
                         org.mockito.ArgumentMatchers.eq("FLEXLB_GROUP"),
                         org.mockito.ArgumentMatchers.eq(3000L)))
                 .thenReturn(
-                        "{\"schemaVersion\":4,\"observability\":{\"logging\":{\"level\":\"warn\"}}}");
+                        "{\"schemaVersion\":5,\"observability\":{\"logging\":{\"level\":\"warn\"}}}");
         NacosConfigSource source = createSource(client, "test-namespace");
 
         source.initialize();
@@ -284,7 +284,7 @@ class NacosConfigSourceTest {
         listenerCaptor
                 .getValue()
                 .receiveConfigInfo(
-                        "{\"schemaVersion\":4,\"observability\":{\"logging\":{\"level\":\"error\"}}}");
+                        "{\"schemaVersion\":5,\"observability\":{\"logging\":{\"level\":\"error\"}}}");
         configService.close();
 
         assertThat(configService.loadBalanceConfig().getObservability().getLogging().getLevel())
@@ -302,7 +302,7 @@ class NacosConfigSourceTest {
                         org.mockito.ArgumentMatchers.eq("FLEXLB_GROUP"),
                         org.mockito.ArgumentMatchers.eq(3000L)))
                 .thenReturn(
-                        "{\"schemaVersion\":4,\"observability\":{\"logging\":{\"level\":\"warn\"}}}");
+                        "{\"schemaVersion\":5,\"observability\":{\"logging\":{\"level\":\"warn\"}}}");
         NacosConfigSource source = createSource(client, "");
         source.initialize();
         ConfigService configService =

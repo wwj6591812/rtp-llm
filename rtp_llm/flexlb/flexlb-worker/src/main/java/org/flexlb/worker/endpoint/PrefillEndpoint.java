@@ -37,12 +37,19 @@ public class PrefillEndpoint extends WorkerEndpoint
 
     private long registeredComputeTokens;
     private long reportedUnknownComputeTokens;
+    private long reportedExtraComputeTokens;
     private long resourceVersion;
+    private long reportedUnknownRequests;
+    private long reportedUnknownDurationMs;
+    private long unobservedRequests;
+
+    private final int maxInflightRequests;
+
+    private final Long engineWaitingThreshold;
+
+    private long reportedWaitingRequests = -1L;
 
     private final PrefillTimePredictor predictor = new PrefillTimePredictor();
-
-    private final long maxComputeTokens;
-
     private final CapacityNotifier capacityNotifier;
 
     private SelectionSnapshot selectionSnapshotCache;
@@ -50,10 +57,12 @@ public class PrefillEndpoint extends WorkerEndpoint
     PrefillEndpoint(WorkerStatus status, FlexlbConfig config, CapacityNotifier capacityNotifier) {
         super(status);
         this.capacityNotifier = Objects.requireNonNull(capacityNotifier);
-        this.maxComputeTokens = config.getRouter().getRoles().getPrefill().getMaxComputeTokens();
+        var admission = config.getRouter().getRoles().getPrefill().getAdmission();
+        maxInflightRequests = admission.getMaxInflightRequests();
+        var queue = config.getRouter().getRoles().getPrefill().engineQueueAdmission();
+        engineWaitingThreshold = queue == null ? null : queue.getWaitingThreshold();
     }
 
-    // Token headroom depends on the incoming request. Probe one request per observation.
     public RequestCapacity requestCapacity() {
         stateLock().lock();
         try {
@@ -62,7 +71,7 @@ public class PrefillEndpoint extends WorkerEndpoint
                     CapacityKey.exact(status.getRole(), status.getGroup(), ipPort()),
                     status.getGenerationId(),
                     resourceVersion,
-                    acceptsNewRequests() ? 1L : 0L);
+                    acceptsNewRequests() ? availableRequestSlotsLocked() : 0L);
         } finally {
             stateLock().unlock();
         }
@@ -80,7 +89,9 @@ public class PrefillEndpoint extends WorkerEndpoint
                                 generationId,
                                 resourceVersion,
                                 currentComputeTokensLocked(),
-                                maxComputeTokens);
+                                requests.size() + reportedUnknownRequests,
+                                maxInflightRequests,
+                                engineQueueBlocksAdmissionLocked());
             }
             return selectionSnapshotCache;
         } finally {
@@ -90,6 +101,15 @@ public class PrefillEndpoint extends WorkerEndpoint
 
     public Registration<RequestRegistration> tryRegisterSelection(
             String requestId, PrefillEndpoint.SelectionSnapshot expected, long computeTokens) {
+        return tryRegisterSelection(requestId, expected, computeTokens, -1L);
+    }
+
+    public Registration<RequestRegistration> tryRegisterSelection(
+            String requestId,
+            SelectionSnapshot expected,
+            long computeTokens,
+            long predictedDurationMs) {
+        checkArgument(predictedDurationMs >= -1L, "invalid predicted duration");
         Objects.requireNonNull(requestId, "requestId");
         Objects.requireNonNull(expected, "work snapshot");
         checkArgument(computeTokens >= 0L, "computeTokens must be non-negative");
@@ -99,10 +119,10 @@ public class PrefillEndpoint extends WorkerEndpoint
                 return new Registration<>(WorkerEndpoint.RegistrationStatus.UNAVAILABLE, null);
             if (getStatus().getGenerationId() != expected.generationId())
                 return new Registration<>(WorkerEndpoint.RegistrationStatus.VERSION_CONFLICT, null);
+            if (requests.size() + reportedUnknownRequests >= maxInflightRequests
+                    || engineQueueBlocksAdmissionLocked())
+                return Registration.rejected(RegistrationStatus.CAPACITY_FULL);
             long currentComputeTokens = currentComputeTokensLocked();
-            if (computeTokens > maxComputeTokens
-                    || currentComputeTokens > maxComputeTokens - computeTokens)
-                return new Registration<>(WorkerEndpoint.RegistrationStatus.CAPACITY_FULL, null);
             // A registration followed by rollback can leave the ranking inputs unchanged.
             if (currentComputeTokens != expected.computeTokens())
                 return Registration.rejected(RegistrationStatus.VERSION_CONFLICT);
@@ -115,7 +135,10 @@ public class PrefillEndpoint extends WorkerEndpoint
                             RegistrationPhase.REGISTERED,
                             clock.getAsLong());
             record.computeTokens = computeTokens;
+            record.predictedDurationMs = predictedDurationMs;
+            record.registrationOrder = resourceVersion;
             requests.put(requestId, record);
+            unobservedRequests++;
             registeredComputeTokens += computeTokens;
             resourceVersion++;
             return new Registration<>(WorkerEndpoint.RegistrationStatus.REGISTERED, record);
@@ -137,6 +160,35 @@ public class PrefillEndpoint extends WorkerEndpoint
             entry.sequence = sequence;
             entry.commit(clock.getAsLong());
             return CommitStatus.COMMITTED;
+        } finally {
+            stateLock().unlock();
+        }
+    }
+
+    /**
+     * Estimates remaining duration from preceding registered work and the selected request.
+     * Missing Engine work or an unknown duration suppresses the estimate.
+     */
+    public OptionalLong estimatedCompletionDurationMs(RequestRegistration exact, long nowMs) {
+        stateLock().lock();
+        try {
+            if (requests.get(exact.requestId()) != exact || reportedUnknownDurationMs < 0)
+                return OptionalLong.empty();
+            long duration = reportedUnknownDurationMs;
+            for (var entry : requests.values()) {
+                if (entry.registrationOrder > exact.registrationOrder) continue;
+                if (entry.predictedDurationMs < 0) return OptionalLong.empty();
+                long remaining =
+                        entry.runningObservedAtMs > 0
+                                ? Math.max(
+                                        0L,
+                                        entry.predictedDurationMs
+                                                - entry.observedExecutionMs
+                                                - Math.max(0L, nowMs - entry.runningObservedAtMs))
+                                : entry.predictedDurationMs;
+                duration = saturatedAdd(duration, remaining);
+            }
+            return OptionalLong.of(duration);
         } finally {
             stateLock().unlock();
         }
@@ -281,6 +333,10 @@ public class PrefillEndpoint extends WorkerEndpoint
 
             registeredComputeTokens = 0L;
             reportedUnknownComputeTokens = 0L;
+            reportedExtraComputeTokens = 0L;
+            reportedUnknownRequests = 0L;
+            reportedUnknownDurationMs = 0L;
+            unobservedRequests = 0L;
             resourceVersion++;
         } finally {
             stateLock().unlock();
@@ -334,6 +390,8 @@ public class PrefillEndpoint extends WorkerEndpoint
                 registeredComputeTokens >= entry.computeTokens,
                 "Prefill compute-token count underflow");
         registeredComputeTokens -= entry.computeTokens;
+        reportedExtraComputeTokens -= entry.reportedExtraComputeTokens;
+        if (!entry.observedByEngine) unobservedRequests--;
         resourceVersion++;
     }
 
@@ -346,7 +404,9 @@ public class PrefillEndpoint extends WorkerEndpoint
     }
 
     private long currentComputeTokensLocked() {
-        return saturatedAdd(registeredComputeTokens, reportedUnknownComputeTokens);
+        return saturatedAdd(
+                saturatedAdd(registeredComputeTokens, reportedExtraComputeTokens),
+                reportedUnknownComputeTokens);
     }
 
     /**
@@ -357,6 +417,8 @@ public class PrefillEndpoint extends WorkerEndpoint
         long nowMs = clock.getAsLong();
         var finishedRequests = matchFinishedRequests(observation.finishedTasks());
         var engine = observation.engine();
+        long availableBefore = availableRequestSlotsLocked();
+        reportedWaitingRequests = engine.waitingQueryLen();
         var statuses =
                 new ArrayList<PrefillRequestStatus>(
                         finishedRequests.size() + engine.runningTaskList().size());
@@ -377,8 +439,19 @@ public class PrefillEndpoint extends WorkerEndpoint
         }
 
         boolean changed = !finishedRequests.isEmpty();
+        long previousExtraComputeTokens = reportedExtraComputeTokens;
+        reportedExtraComputeTokens = 0L;
+        for (var entry : requests.values()) {
+            entry.reportedExtraComputeTokens = 0L;
+            if (entry.observedByEngine) {
+                entry.observedByEngine = false;
+                unobservedRequests++;
+            }
+        }
         Set<String> unknown = new HashSet<>(), known = new HashSet<>();
         long unknownComputeTokens = 0L;
+        long unknownDurationMs = 0L;
+        boolean unknownDuration = false;
         for (var task : engine.runningTaskList().values()) {
             if (finishedRequests.containsKey(task.requestId())) continue;
             var entry = requests.get(task.requestId());
@@ -387,24 +460,57 @@ public class PrefillEndpoint extends WorkerEndpoint
                     unknown.add(task.requestId());
                     long tokens =
                             task.inputLength() <= 0
-                                    ? maxComputeTokens
+                                    ? Long.MAX_VALUE
                                     : predictor.computeTokens(
                                             task.inputLength(),
                                             task.telemetry().prefixLengthValid()
                                                     ? task.prefixLength()
                                                     : 0L);
                     unknownComputeTokens = saturatedAdd(unknownComputeTokens, tokens);
+                    if (task.inputLength() <= 0) unknownDuration = true;
+                    else {
+                        long duration =
+                                PrefillTimePredictor.estimateDurationMs(
+                                        task.inputLength(),
+                                        task.telemetry().prefixLengthValid()
+                                                ? task.prefixLength()
+                                                : 0);
+                        unknownDurationMs =
+                                saturatedAdd(
+                                        unknownDurationMs,
+                                        Math.max(
+                                                0L,
+                                                duration - Math.max(0L, task.executionTimeMs())));
+                    }
                 }
                 continue;
             }
             if (!task.isPriorityCancelOverlayOnly()) {
                 known.add(task.requestId());
+                if (task.inputLength() > 0) {
+                    long actual =
+                            predictor.computeTokens(
+                                    task.inputLength(),
+                                    task.telemetry().prefixLengthValid()
+                                            ? task.prefixLength()
+                                            : 0L);
+                    entry.reportedExtraComputeTokens = Math.max(0L, actual - entry.computeTokens);
+                    reportedExtraComputeTokens += entry.reportedExtraComputeTokens;
+                }
                 if (entry.phase == RegistrationPhase.COMMITTED) {
+                    if (!entry.observedByEngine) {
+                        entry.observedByEngine = true;
+                        unobservedRequests--;
+                    }
                     statuses.add(new PrefillRequestStatus(entry, RequestEventType.ACTIVE, 0L));
                 }
             }
             if (entry.phase != RegistrationPhase.COMMITTED) continue;
             entry.lastObservedAtMs = Math.max(entry.lastObservedAtMs, nowMs);
+            if (task.phase() == org.flexlb.worker.status.TaskPhase.RUNNING) {
+                entry.runningObservedAtMs = nowMs;
+                entry.observedExecutionMs = Math.max(0L, task.executionTimeMs());
+            }
         }
 
         for (var finished : finishedRequests.values()) {
@@ -415,11 +521,23 @@ public class PrefillEndpoint extends WorkerEndpoint
                         Math.max(0L, engine.waitingQueryLen()),
                         Math.max(0L, engine.runningQueryLen()));
         long unknownCount = Math.max(unknown.size(), Math.max(0L, total - known.size()));
-        if (unknownCount > unknown.size()) unknownComputeTokens = maxComputeTokens;
+        if (unknownCount > unknown.size()) {
+            unknownComputeTokens = Long.MAX_VALUE;
+            unknownDuration = true;
+        }
+        reportedUnknownDurationMs = unknownDuration ? -1L : unknownDurationMs;
         boolean released =
-                !finishedRequests.isEmpty() || unknownComputeTokens < reportedUnknownComputeTokens;
-        changed |= unknownComputeTokens != reportedUnknownComputeTokens;
+                !finishedRequests.isEmpty()
+                        || unknownComputeTokens < reportedUnknownComputeTokens
+                        || reportedExtraComputeTokens < previousExtraComputeTokens;
+        changed |=
+                unknownComputeTokens != reportedUnknownComputeTokens
+                        || reportedExtraComputeTokens != previousExtraComputeTokens
+                        || unknownCount != reportedUnknownRequests;
+        released |= unknownCount < reportedUnknownRequests;
+        reportedUnknownRequests = unknownCount;
         reportedUnknownComputeTokens = unknownComputeTokens;
+        changed |= availableBefore != availableRequestSlotsLocked();
         if (changed) {
             resourceVersion++;
         }
@@ -445,6 +563,24 @@ public class PrefillEndpoint extends WorkerEndpoint
             matched.put(requestId, next);
         }
         return matched;
+    }
+
+    private long availableRequestSlotsLocked() {
+        long occupied = saturatedAdd(requests.size(), reportedUnknownRequests);
+        long slots = Math.max(0L, maxInflightRequests - occupied);
+        if (engineWaitingThreshold != null && reportedWaitingRequests >= 0) {
+            long headroom = engineWaitingThreshold - unobservedRequests;
+            if (reportedWaitingRequests > headroom) return 0L;
+            // Registration checks the current watermark before adding the next request.
+            slots = Math.min(slots, saturatedAdd(headroom - reportedWaitingRequests, 1L));
+        }
+        return slots;
+    }
+
+    private boolean engineQueueBlocksAdmissionLocked() {
+        return engineWaitingThreshold != null
+                && reportedWaitingRequests >= 0
+                && reportedWaitingRequests > engineWaitingThreshold - unobservedRequests;
     }
 
     /**
@@ -474,10 +610,19 @@ public class PrefillEndpoint extends WorkerEndpoint
     }
 
     /**
-     * Freezes compute-token usage, its limit and the exact registration version for selection.
+     * Freezes work estimates, request capacity and the exact registration version for selection.
      */
     public record SelectionSnapshot(
-            long generationId, long resourceVersion, long computeTokens, long maxComputeTokens) {}
+            long generationId,
+            long resourceVersion,
+            long computeTokens,
+            long outstandingRequests,
+            int maxInflightRequests,
+            boolean engineQueueBlocked) {
+        public boolean admissionBlocked() {
+            return outstandingRequests >= maxInflightRequests || engineQueueBlocked;
+        }
+    }
 
     /**
      * Retains one Prefill selection and its compute-token charge; event association and updates
@@ -499,7 +644,15 @@ public class PrefillEndpoint extends WorkerEndpoint
          */
         long computeTokens;
 
+        // Engine work exceeding the cache estimate, replaced on each full status report.
+        private long reportedExtraComputeTokens;
+
         long lastObservedAtMs;
+        private boolean observedByEngine;
+        private long predictedDurationMs = -1L;
+        private long registrationOrder;
+        private long runningObservedAtMs;
+        private long observedExecutionMs;
 
         private RequestRegistration(
                 long endpointGenerationId, String requestId, RegistrationPhase phase, long nowMs) {

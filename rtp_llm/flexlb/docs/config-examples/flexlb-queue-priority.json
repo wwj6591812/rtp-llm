@@ -1,25 +1,38 @@
 {
-  "schemaVersion": 4,
+  "schemaVersion": 5,
+  "requestLifecycle": {
+    "dispatchTimeoutMs": 60000,
+    "inactivityTimeoutMs": 60000,
+    "engineVisibilityMultiplier": 2
+  },
   "scheduler": {
     "type": "QUEUE",
-    "queueTimeoutMs": 3600000,
     "ordering": {
-      "type": "PRIORITY",
-      "defaultPriority": 50,
-      "preemption": {
-        "allowedVictimStages": ["DECODE_ENGINE_OWNED"],
-        "timeoutMs": 1000
+      "priority": {
+        "enabled": true,
+        "defaultPriority": 50,
+        "preemption": {
+          "allowedVictimStages": ["DECODE_ENGINE_OWNED"],
+          "timeoutMs": 1000
+        }
+      },
+      "policy": {
+        "type": "FIFO"
       }
     }
   },
   "router": {
     "roles": {
       "prefill": {
-        "cacheAffinity": {
-          "maxComputeTokens": 262144,
-          "minPrefixHitPercent": 5
+        "selection": {
+          "type": "COST_BASED",
+          "cacheAffinity": {
+            "minPrefixHitPercent": 5
+          }
         },
-        "maxComputeTokens": 1048576
+        "admission": {
+          "maxInflightRequests": 128
+        }
       },
       "decode": {
         "availability": {
@@ -51,11 +64,6 @@
       },
       "metricsEnabled": true,
       "requestTraceLogEnabled": false
-    }
-  },
-  "requestLifecycle": {
-    "request": {
-      "timeoutMs": 3600000
     }
   }
 }

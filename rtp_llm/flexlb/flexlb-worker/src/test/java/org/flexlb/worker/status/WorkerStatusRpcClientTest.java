@@ -20,6 +20,34 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 class WorkerStatusRpcClientTest {
 
     @org.junit.jupiter.api.Test
+    void detailedCountsRaiseIncompleteSummariesWithoutLoweringReportedOccupancy() {
+        var owner =
+                WorkerStatus.createDiscovered(
+                        RoleType.PREFILL, null, "127.0.0.1", 8080, 8081, null);
+        var builder =
+                EngineRpcService.WorkerStatusPB.newBuilder()
+                        .setRunningQueryLen(3)
+                        .setWaitingQueryLen(0)
+                        .addRunningTaskInfo(
+                                EngineRpcService.TaskInfoPB.newBuilder()
+                                        .setRequestId(1)
+                                        .setPhase(EngineRpcService.TaskPhase.TASK_PHASE_RUNNING))
+                        .addRunningTaskInfo(
+                                EngineRpcService.TaskInfoPB.newBuilder()
+                                        .setRequestId(2)
+                                        .setPhase(EngineRpcService.TaskPhase.TASK_PHASE_RECEIVED))
+                        .addRunningTaskInfo(
+                                EngineRpcService.TaskInfoPB.newBuilder()
+                                        .setRequestId(3)
+                                        .setPhase(
+                                                EngineRpcService.TaskPhase
+                                                        .TASK_PHASE_KV_ALLOCATED));
+        var observation = WorkerStatusRpcClient.convertToStatusObservation(owner, builder.build());
+        assertEquals(3, observation.engine().runningQueryLen());
+        assertEquals(2, observation.engine().waitingQueryLen());
+    }
+
+    @org.junit.jupiter.api.Test
     void cacheVersionPreservesItsFullInt64Range() {
         EngineGrpcClient client = mock(EngineGrpcClient.class);
         long version = (long) Integer.MAX_VALUE + 10L;

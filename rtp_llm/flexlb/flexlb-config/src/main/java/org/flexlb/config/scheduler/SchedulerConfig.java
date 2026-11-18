@@ -18,11 +18,6 @@ public final class SchedulerConfig {
     private NettyMemoryReporterConfig nettyMemoryReporter = new NettyMemoryReporterConfig();
 
     /**
-     * Maximum time a request may remain owned by the QUEUE scheduler.
-     */
-    private long queueTimeoutMs = 3_600_000L;
-
-    /**
      * Maximum queue entries examined per candidate requested by the planner.
      */
     private double scanBudgetMultiplier = 2.0;
@@ -33,12 +28,6 @@ public final class SchedulerConfig {
     private long capacityCheckIntervalMs = 100L;
 
     private QueueOrderingConfig ordering = new QueueOrderingConfig();
-
-    public long resolveExpiresAtMs(long admissionTimeMs) {
-        return admissionTimeMs > Long.MAX_VALUE - queueTimeoutMs
-                ? Long.MAX_VALUE
-                : admissionTimeMs + queueTimeoutMs;
-    }
 
     public enum Type {
         DIRECT,

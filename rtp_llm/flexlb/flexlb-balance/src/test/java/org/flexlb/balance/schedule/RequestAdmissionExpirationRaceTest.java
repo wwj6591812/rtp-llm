@@ -29,7 +29,7 @@ class RequestAdmissionExpirationRaceTest {
     @Test
     void shutdownPreservesCommittedResponsesDespiteTheFirstCleanupFailure() throws Exception {
         var config = SchedulingTestConfig.newConfig();
-        config.getRequestLifecycle().getRequest().setTimeoutMs(60_000L);
+        config.getRequestLifecycle().setInactivityTimeoutMs(60_000L);
         ConfigService service = mock(ConfigService.class);
         when(service.loadBalanceConfig()).thenReturn(config);
         var registry =
@@ -79,6 +79,9 @@ class RequestAdmissionExpirationRaceTest {
                                     RequestProtocolTestSupport.publication(() -> true)));
                 }
             }
+            for (var context : contexts)
+                context.recordRemoteCleanup(
+                        context.snapshot().committedRoute(), true, System.currentTimeMillis());
             assertTrue(RequestProtocolTestSupport.closeRegistrationAndAwaitScheduling(registry));
             assertSame(
                     cleanupFailure,

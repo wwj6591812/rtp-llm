@@ -10,14 +10,17 @@ import lombok.Setter;
 @Setter
 public final class RequestLifecycleConfig {
 
-    private RequestConfig request = new RequestConfig();
+    private static final long ENGINE_FEEDBACK_GRACE_MS = 10_000L;
 
-    @Getter
-    @Setter
-    public static final class RequestConfig {
-        /**
-         * Maximum silence since registration or the latest matching Engine request status.
-         */
-        private Long timeoutMs;
+    private long dispatchTimeoutMs = 60_000L;
+    private long inactivityTimeoutMs = 60_000L;
+    private double engineVisibilityMultiplier = 2.0;
+
+    /** Allows for prediction uncertainty and the Engine feedback interval. */
+    public long visibilityDeadlineMs(long nowMs, long predictedDurationMs) {
+        long delay = (long) Math.ceil(predictedDurationMs * engineVisibilityMultiplier);
+        return com.google.common.math.LongMath.saturatedAdd(
+                com.google.common.math.LongMath.saturatedAdd(nowMs, delay),
+                ENGINE_FEEDBACK_GRACE_MS);
     }
 }

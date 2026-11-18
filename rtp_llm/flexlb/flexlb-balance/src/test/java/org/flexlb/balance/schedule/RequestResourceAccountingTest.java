@@ -77,6 +77,8 @@ class RequestResourceAccountingTest {
             f.requests.cancel(String.valueOf(ID), CancelReason.CLIENT_CANCELLED);
             assertTrue(f.cancelSent.await(5, TimeUnit.SECONDS));
             f.decodeStatus(Map.of(), Map.of("101", task(ID)), TOTAL_KV);
+            assertEquals(1, f.prefill.stats().locallyOwnedRequests());
+            f.requests.onEngineCancelReply(f.item, EngineGrpcClient.CancelReply.REQUEST_CLEANED);
             f.assertEmpty();
             var archived = f.requests.repository.getRequestState(String.valueOf(ID));
             assertFalse(f.requests.isCurrentRequest(f.item.ctx()));
@@ -223,10 +225,11 @@ class RequestResourceAccountingTest {
                     org.flexlb.balance.schedule.SchedulerTestSupport.runtime(f.requests));
             assertEquals(1, SchedulerTestSupport.repository(f.requests).liveRequestCount());
             assertEquals(RequestContext.Phase.ENDING, f.item.ctx().snapshot().phase());
-            assertEquals(0, f.prefill.stats().locallyOwnedRequests());
+            assertEquals(1, f.prefill.stats().locallyOwnedRequests());
             assertEquals(0L, f.decode.selectionSnapshot().usage().hardReservedKvTokens());
             assertEquals(1, f.decode.selectionSnapshot().usage().occupiedRequests());
             f.decodeStatus(Map.of(), Map.of("101", task(ID)), TOTAL_KV);
+            f.requests.onEngineCancelReply(f.item, EngineGrpcClient.CancelReply.REQUEST_CLEANED);
             f.assertEmpty();
             f.assertCapacityReusable();
         }
@@ -313,7 +316,7 @@ class RequestResourceAccountingTest {
         Fixture(boolean keepAdmissionOpen) {
             var config = SchedulingTestConfig.newConfig();
             config.setScheduler(ConfigTestSupport.direct());
-            config.getRequestLifecycle().getRequest().setTimeoutMs(TTL);
+            config.getRequestLifecycle().setInactivityTimeoutMs(TTL);
             ConfigService service = mock(ConfigService.class);
             when(service.loadBalanceConfig()).thenReturn(config);
             var reporter = mock(DeliveryMetricsReporter.class);
@@ -582,6 +585,10 @@ class RequestResourceAccountingTest {
         }
 
         void expire() {
+            if (item.ctx().snapshot().committedRoute() == null) {
+                requests.onDeadline(item.ctx().snapshot().deadlines().request(), Long.MAX_VALUE);
+                return;
+            }
             RequestProtocolTestSupport.expireInactiveRequest(
                     requests,
                     requests.repository.findActive(String.valueOf(ID)),

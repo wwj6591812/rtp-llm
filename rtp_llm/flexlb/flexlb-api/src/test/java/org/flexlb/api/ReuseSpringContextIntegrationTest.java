@@ -66,8 +66,8 @@ public class ReuseSpringContextIntegrationTest {
         environmentVariables.set(
                 "FLEXLB_CONFIG",
                 """
-                {"schemaVersion":4,
-                 "requestLifecycle":{"request":{"timeoutMs":60000},"decision":{"lifetime":2}}}
+                {"schemaVersion":5,
+                 "requestLifecycle":{"inactivityTimeoutMs": 60000,"decision":{"lifetime":2}}}
                 """);
         environmentVariables.set("BIZ_NAME", "flexlb-test");
         environmentVariables.set("DEPLOYMENT_NAME", "integration");

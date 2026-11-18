@@ -273,7 +273,7 @@ class RequestSchedulerContractTest {
                     .deadlines()
                     .update(request, request.snapshot().deadlines());
             ExpirationTimer.Token deadline =
-                    RequestProtocolTestSupport.field(request, "inactivityDeadline");
+                    RequestProtocolTestSupport.field(request, "requestDeadline");
             assertNotNull(deadline);
             SchedulerTestServices.entry(f.scheduler).cancel("901", CancelReason.CLIENT_CANCELLED);
             future.get(3, TimeUnit.SECONDS);
@@ -727,6 +727,7 @@ class RequestSchedulerContractTest {
                                 route,
                                 RequestProtocolTestSupport.publication(() -> true)));
             }
+            request.recordRemoteCleanup(route, true, System.currentTimeMillis());
             var failure = new IllegalStateException("endpoint release failed");
             var prefillRegistration = route.prefillRegistration();
             doThrow(failure).when(endpoint).releaseRequest(prefillRegistration);

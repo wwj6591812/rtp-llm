@@ -50,7 +50,7 @@ class UniConfigConfigSourceTest {
                     + "df4a7748.flexlb-test-wlcb.runtime.meta";
     private static final String INITIAL_CONFIG =
             """
-            {"schemaVersion":4,"requestLifecycle":{"request":{"timeoutMs":60000}},"consistency":{"type":"NONE"},
+            {"schemaVersion":5,"requestLifecycle":{"inactivityTimeoutMs": 60000},"consistency":{"type":"NONE"},
             "router":{"roles":{"prefill":{"maxComputeTokens":1048585}}}}
             """;
 

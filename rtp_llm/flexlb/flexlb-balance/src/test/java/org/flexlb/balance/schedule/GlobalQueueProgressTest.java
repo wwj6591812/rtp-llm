@@ -63,6 +63,39 @@ import static org.mockito.Mockito.when;
 class GlobalQueueProgressTest {
 
     @Test
+    void singlePlannerAlternatesCostRefreshWithRouting() throws Exception {
+        try (Fixture f = new Fixture(RoleType.PREFILL, false, true, 1)) {
+            var firstRefresh = new CountDownLatch(1);
+            var allowRefresh = new CountDownLatch(1);
+            var refreshCalls = new AtomicInteger();
+            when(f.router.estimateQueuedTokens(any(), nullable(String.class)))
+                    .thenAnswer(
+                            call -> {
+                                assertTrue(
+                                        Thread.currentThread()
+                                                .getName()
+                                                .startsWith("flexlb-global-planner-"));
+                                if (refreshCalls.incrementAndGet() == 1) {
+                                    firstRefresh.countDown();
+                                    assertTrue(allowRefresh.await(5, TimeUnit.SECONDS));
+                                }
+                                return java.util.OptionalLong.of(1);
+                            });
+            f.submit(1, "b");
+            await(firstRefresh);
+            for (long id = 2; id <= 8; id++) f.submit(id, "b");
+            var refreshesAtFirstSelection = new AtomicInteger(-1);
+            f.onSelection = id -> refreshesAtFirstSelection.compareAndSet(-1, refreshCalls.get());
+            allowRefresh.countDown();
+            awaitCondition(() -> f.admitted.size() == 8);
+            assertEquals(
+                    1,
+                    refreshesAtFirstSelection.get(),
+                    "routing must not wait for the entire estimate backlog");
+        }
+    }
+
+    @Test
     void retriesCapacityWithoutAnotherNotification() throws Exception {
         try (Fixture f = new Fixture(RoleType.PREFILL)) {
             long id = 19001L;
@@ -891,6 +924,7 @@ class GlobalQueueProgressTest {
                         .finishSelectionWithoutCommit(
                                 org.mockito.ArgumentMatchers.same(f.mutations.get(id)),
                                 org.mockito.ArgumentMatchers.isNull());
+                awaitCondition(() -> f.contexts.get(id).snapshot().selectionId() == 0L);
                 assertEquals(0L, f.contexts.get(id).snapshot().selectionId());
                 assertEquals(
                         RequestContext.ResponseKind.ACK,
@@ -1178,12 +1212,24 @@ class GlobalQueueProgressTest {
         }
 
         private Fixture(RoleType role, boolean preempt) {
+            this(role, preempt, false, 2);
+        }
+
+        private Fixture(RoleType role, boolean preempt, boolean costOrder, int planners) {
             this.role = role;
             SchedulingTestConfig.useFifoQueue(config);
             if (preempt) {
                 SchedulingTestConfig.usePriorityQueue(config);
                 SchedulingTestConfig.allowVictim(config, PreemptionStage.DECODE_ENGINE_OWNED);
             }
+            if (costOrder)
+                config.queueScheduler()
+                        .getOrdering()
+                        .getPolicy()
+                        .setType(
+                                org.flexlb.config.scheduler.QueueOrderingConfig.PolicyType
+                                        .PREFILL_COST);
+            when(config.getInternalRuntime().getQueuePlannerThreads()).thenReturn(planners);
             when(router.requestCapacities())
                     .thenAnswer(
                             call -> {
@@ -1201,7 +1247,7 @@ class GlobalQueueProgressTest {
                                                                     java.util.Objects.hashCode(
                                                                             group)),
                                                     System.nanoTime(),
-                                                    "a".equals(group) ? aSlots.get() : 2));
+                                                    "a".equals(group) ? aSlots.get() : planners));
                                 return result;
                             });
             when(router.requestCapacity(any()))
@@ -1216,7 +1262,7 @@ class GlobalQueueProgressTest {
                                                 endpoint.ipPort()),
                                         status.getGenerationId(),
                                         System.nanoTime(),
-                                        "a".equals(status.getGroup()) ? aSlots.get() : 2);
+                                        "a".equals(status.getGroup()) ? aSlots.get() : planners);
                             });
             ConfigService service = mock(ConfigService.class);
             when(service.loadBalanceConfig()).thenReturn(config);

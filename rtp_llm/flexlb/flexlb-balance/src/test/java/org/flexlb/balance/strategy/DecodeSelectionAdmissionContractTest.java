@@ -187,13 +187,13 @@ class DecodeSelectionAdmissionContractTest {
             } else if (policy != Policy.FIFO) {
                 QueueOrderingConfig ordering = ConfigTestSupport.priority();
                 if (policy == Policy.PRIORITY_ONLY) {
-                    ordering.setPreemption(null);
+                    ordering.getPriority().setPreemption(null);
                 }
                 if (policy == Policy.PREEMPTIVE) {
                     PreemptionConfig preemption = new PreemptionConfig();
                     preemption.setAllowedPreemptionStages(
                             EnumSet.of(PreemptionStage.DECODE_ENGINE_OWNED));
-                    ordering.setPreemption(preemption);
+                    ordering.getPriority().setPreemption(preemption);
                 }
                 config.queueScheduler().setOrdering(ordering);
             }

@@ -42,7 +42,7 @@ class ConfigServiceTest {
                         Map.of(
                                 "FLEXLB_CONFIG",
                                 """
-                        {"schemaVersion":4,"requestLifecycle":{"request":{"timeoutMs":60000}},"observability":{"logging":{"level":"error"}}}
+                        {"schemaVersion":5,"requestLifecycle":{"inactivityTimeoutMs": 60000},"observability":{"logging":{"level":"error"}}}
                         """));
         FakeConfigSource nacosSource =
                 new FakeConfigSource(
@@ -50,7 +50,7 @@ class ConfigServiceTest {
                         200,
                         """
                         {
-                          "schemaVersion":4,"requestLifecycle":{"request":{"timeoutMs":60000}},
+                          "schemaVersion":5,"requestLifecycle":{"inactivityTimeoutMs": 60000},
                           "scheduler":{"type":"DIRECT"},
 
                           "observability":{"logging":{"level":"warn"}}
@@ -71,7 +71,7 @@ class ConfigServiceTest {
                         "unregistered",
                         200,
                         """
-                        {"schemaVersion":4,"requestLifecycle":{"request":{"timeoutMs":60000}},"scheduler":{"type":"DIRECT"}}
+                        {"schemaVersion":5,"requestLifecycle":{"inactivityTimeoutMs": 60000},"scheduler":{"type":"DIRECT"}}
                         """);
 
         ConfigService service = createService(List.of(environmentSource(Map.of())));
@@ -102,14 +102,14 @@ class ConfigServiceTest {
     void failsFastForInvalidInitialContent() {
         assertInvalidInitialContent("[]", "must be a JSON object");
         assertInvalidInitialContent(
-                "{\"schemaVersion\":4,\"scheduler\":{\"type\":\"INVALID\"}}",
+                "{\"schemaVersion\":5,\"scheduler\":{\"type\":\"INVALID\"}}",
                 "Cannot deserialize value");
     }
 
     @Test
     void rejectsUnknownSourceFields() {
         assertInvalidInitialContent(
-                "{\"schemaVersion\":4,\"unknownField\":1}", "Unrecognized field");
+                "{\"schemaVersion\":5,\"unknownField\":1}", "Unrecognized field");
     }
 
     @Test
@@ -124,7 +124,7 @@ class ConfigServiceTest {
                 new FakeConfigSource(
                         "Nacos",
                         200,
-                        "{\"schemaVersion\":4,\"observability\":{\"logging\":{\"level\":\"warn\"}}}");
+                        "{\"schemaVersion\":5,\"observability\":{\"logging\":{\"level\":\"warn\"}}}");
 
         ConfigService service = createService(List.of(environmentSource(Map.of()), source));
 
@@ -141,7 +141,7 @@ class ConfigServiceTest {
                                         "MODEL_SERVICE_CONFIG",
                                         "{\"service_id\":\"environment-service\",\"role_endpoints\":[]}",
                                         "FLEXLB_CONFIG",
-                                        "{\"schemaVersion\":4,\"observability\":{\"logging\":{\"level\":\"error\"}}}"))
+                                        "{\"schemaVersion\":5,\"observability\":{\"logging\":{\"level\":\"error\"}}}"))
                         .execute(
                                 () -> {
                                     EnvironmentConfigSource environmentSource =
@@ -151,7 +151,7 @@ class ConfigServiceTest {
                                             new FakeConfigSource(
                                                     "Nacos",
                                                     200,
-                                                    "{\"schemaVersion\":4,\"observability\":{\"logging\":{\"level\":\"warn\"}}}"));
+                                                    "{\"schemaVersion\":5,\"observability\":{\"logging\":{\"level\":\"warn\"}}}"));
                                     return new ConfigService();
                                 });
         configService = service;
@@ -169,7 +169,7 @@ class ConfigServiceTest {
                         200,
                         """
                         {
-                          "schemaVersion":4,"requestLifecycle":{"request":{"timeoutMs":60000}},
+                          "schemaVersion":5,"requestLifecycle":{"inactivityTimeoutMs": 60000},
                           "observability":{
                             "logging":{"level":"warn","stdoutEnabled":true},
                             "cacheHit":{"metricsEnabled":true}
@@ -180,7 +180,7 @@ class ConfigServiceTest {
 
         FlexlbConfig initialSnapshot = service.loadBalanceConfig();
         source.emit(
-                "{\"schemaVersion\":4,\"observability\":{\"cacheHit\":{\"metricsEnabled\":false}}}");
+                "{\"schemaVersion\":5,\"observability\":{\"cacheHit\":{\"metricsEnabled\":false}}}");
         FlexlbConfig updatedSnapshot = service.loadBalanceConfig();
 
         assertThat(updatedSnapshot).isNotSameAs(initialSnapshot);
@@ -210,13 +210,13 @@ class ConfigServiceTest {
                                     message.startsWith("FlexLB config loaded: schemaVersion=0,"));
 
             appender.list.clear();
-            source.emit("{\"schemaVersion\":4,\"scheduler\":{\"type\":\"QUEUE\"}}");
+            source.emit("{\"schemaVersion\":5,\"scheduler\":{\"type\":\"QUEUE\"}}");
 
             assertThat(appender.list)
                     .extracting(ILoggingEvent::getFormattedMessage)
                     .anyMatch(
                             message ->
-                                    message.startsWith("FlexLB config loaded: schemaVersion=4,"));
+                                    message.startsWith("FlexLB config loaded: schemaVersion=5,"));
         } finally {
             logger.detachAppender(appender);
             appender.stop();
@@ -231,7 +231,7 @@ class ConfigServiceTest {
                         200,
                         """
                         {
-                          "schemaVersion":4,"requestLifecycle":{"request":{"timeoutMs":60000}},
+                          "schemaVersion":5,"requestLifecycle":{"inactivityTimeoutMs": 60000},
                           "cacheMatching": {
                             "type": "KVCM",
                             "requestTimeoutMs": 900,
@@ -241,17 +241,17 @@ class ConfigServiceTest {
                         """);
         ConfigService service = createService(List.of(environmentSource(Map.of()), source));
 
-        source.emit("{\"schemaVersion\":4,\"cacheMatching\":{\"requestTimeoutMs\":750}}");
+        source.emit("{\"schemaVersion\":5,\"cacheMatching\":{\"requestTimeoutMs\":750}}");
         KvcmCacheMatchingConfig patched =
                 (KvcmCacheMatchingConfig) service.loadBalanceConfig().getCacheMatching();
         assertThat(patched.getRequestTimeoutMs()).isEqualTo(750);
         assertThat(patched.getLeaderRefreshIntervalMs()).isEqualTo(20_000);
 
-        source.emit("{\"schemaVersion\":4,\"cacheMatching\":{\"type\":\"LOCAL_SYNC\"}}");
+        source.emit("{\"schemaVersion\":5,\"cacheMatching\":{\"type\":\"LOCAL_SYNC\"}}");
         assertThat(service.loadBalanceConfig().getCacheMatching())
                 .isInstanceOf(LocalSyncCacheMatchingConfig.class);
 
-        source.emit("{\"schemaVersion\":4,\"cacheMatching\":{\"type\":\"KVCM\"}}");
+        source.emit("{\"schemaVersion\":5,\"cacheMatching\":{\"type\":\"KVCM\"}}");
         KvcmCacheMatchingConfig replaced =
                 (KvcmCacheMatchingConfig) service.loadBalanceConfig().getCacheMatching();
         assertThat(replaced.getRequestTimeoutMs())
@@ -266,13 +266,13 @@ class ConfigServiceTest {
                 new FakeConfigSource(
                         "Nacos",
                         200,
-                        "{\"schemaVersion\":4,\"observability\":{\"logging\":{\"level\":\"warn\"}}}");
+                        "{\"schemaVersion\":5,\"observability\":{\"logging\":{\"level\":\"warn\"}}}");
         ConfigService service = createService(List.of(environmentSource(Map.of()), source));
         List<LogLevel> updates = new ArrayList<>();
 
         service.addUpdateListener(
                 config -> updates.add(config.getObservability().getLogging().getLevel()));
-        source.emit("{\"schemaVersion\":4,\"observability\":{\"logging\":{\"level\":\"error\"}}}");
+        source.emit("{\"schemaVersion\":5,\"observability\":{\"logging\":{\"level\":\"error\"}}}");
 
         assertThat(updates).containsExactly(LogLevel.WARN, LogLevel.ERROR);
     }
@@ -283,13 +283,13 @@ class ConfigServiceTest {
                 new FakeConfigSource(
                         "Nacos",
                         200,
-                        "{\"schemaVersion\":4,\"observability\":{\"logging\":{\"level\":\"warn\"}}}");
+                        "{\"schemaVersion\":5,\"observability\":{\"logging\":{\"level\":\"warn\"}}}");
         ConfigService service = createService(List.of(environmentSource(Map.of()), source));
         FlexlbConfig lastKnownGood = service.loadBalanceConfig();
 
         source.emit("");
         assertThat(service.loadBalanceConfig()).isSameAs(lastKnownGood);
-        source.emit("{\"schemaVersion\":4,\"unknownField\":1}");
+        source.emit("{\"schemaVersion\":5,\"unknownField\":1}");
         assertThat(service.loadBalanceConfig()).isSameAs(lastKnownGood);
     }
 
@@ -299,7 +299,7 @@ class ConfigServiceTest {
                 new FakeConfigSource(
                         "Nacos",
                         200,
-                        "{\"schemaVersion\":4,\"observability\":{\"logging\":{\"level\":\"warn\"}}}");
+                        "{\"schemaVersion\":5,\"observability\":{\"logging\":{\"level\":\"warn\"}}}");
         ConfigService service = createService(List.of(environmentSource(Map.of()), source));
         List<LogLevel> updates = new ArrayList<>();
         service.addUpdateListener(
@@ -316,7 +316,7 @@ class ConfigServiceTest {
                 new FakeConfigSource(
                         "Nacos",
                         200,
-                        "{\"schemaVersion\":4,\"observability\":{\"logging\":{\"level\":\"warn\"}}}");
+                        "{\"schemaVersion\":5,\"observability\":{\"logging\":{\"level\":\"warn\"}}}");
         ConfigService service = createService(List.of(environmentSource(Map.of()), source));
 
         service.close();

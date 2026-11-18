@@ -2,7 +2,6 @@ package org.flexlb.balance.schedule;
 
 import org.flexlb.balance.metrics.DeliveryMetricsReporter;
 import org.flexlb.balance.metrics.RequestSchedulerReporter;
-import org.flexlb.balance.queue.OrderedRequestQueue;
 import org.flexlb.balance.queue.SchedulingQueue;
 import org.flexlb.balance.requestlog.TheoryCacheHitReporter;
 import org.flexlb.balance.schedule.RequestContext.SelectionAttempt;
@@ -99,7 +98,7 @@ public final class SchedulerTestSupport {
                         route.requestId(),
                         now,
                         route.ctx().getRequestExpiresAtMs(),
-                        context.getConfig().getRequestLifecycle().getRequest().getTimeoutMs(),
+                        context.getConfig().getRequestLifecycle().getInactivityTimeoutMs(),
                         org.flexlb.worker.endpoint.StrategyErrorType.SCHEDULING_DEADLINE_EXCEEDED);
                 var placement = (SelectionAttempt) context.beginRouteSelection();
                 synchronized (context) {
@@ -498,8 +497,8 @@ public final class SchedulerTestSupport {
                                                         eviction,
                                                         dependencies,
                                                         availability,
-                                                        new OrderedRequestQueue(
-                                                                snapshot.isPriorityOrdering())))
+                                                        new SchedulerConfiguration()
+                                                                .schedulingQueue(config)))
                                         .defaultAnswer(CALLS_REAL_METHODS))
                         : mock(
                                 DirectRequestScheduler.class,

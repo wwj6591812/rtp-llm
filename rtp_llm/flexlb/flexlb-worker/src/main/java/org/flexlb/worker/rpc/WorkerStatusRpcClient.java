@@ -83,6 +83,12 @@ public class WorkerStatusRpcClient {
                 convertTasks(workerStatusPB.getRunningTaskInfoList());
         Map<String, TaskObservation> finishedTasks =
                 convertTasks(workerStatusPB.getFinishedTaskListList());
+        long running = 0, waiting = 0;
+        for (var task : activeTasks.values()) {
+            if (task.isPriorityCancelOverlayOnly()) continue;
+            if (task.phase() == TaskPhase.RUNNING) running++;
+            else waiting++;
+        }
         EngineObservation engine =
                 new EngineObservation(
                         RoleTypeProtoConverter.fromWorkerStatus(workerStatusPB),
@@ -101,8 +107,8 @@ public class WorkerStatusRpcClient {
                         convertKvCacheGroupMode(workerStatusPB.getKvCacheGroupMode()),
                         workerStatusPB.getMaxSeqLen(),
                         workerStatusPB.getMaxBatchTokensSize(),
-                        workerStatusPB.getRunningQueryLen(),
-                        workerStatusPB.getWaitingQueryLen(),
+                        Math.max(workerStatusPB.getRunningQueryLen(), running),
+                        Math.max(workerStatusPB.getWaitingQueryLen(), waiting),
                         convertStepMetrics(workerStatusPB));
         return owner.bindStatusObservation(
                 engine,

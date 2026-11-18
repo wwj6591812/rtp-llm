@@ -116,7 +116,7 @@ public abstract class AbstractRequestScheduler implements RequestScheduler {
                             request,
                             this,
                             future,
-                            config.getRequestLifecycle().getRequest().getTimeoutMs(),
+                            config.getRequestLifecycle().getInactivityTimeoutMs(),
                             schedulingTimeoutError());
             if (registration != RequestRepository.RegistrationResult.REGISTERED) {
                 var error =
@@ -878,7 +878,9 @@ public abstract class AbstractRequestScheduler implements RequestScheduler {
                                                 route.encoderEndpoint()
                                                         .releaseRequest(
                                                                 route.encoderRegistration()));
-                    if (route.prefillEndpoint() != null)
+                    boolean mayReleasePrefill =
+                            state.committedRoute() == null || state.prefillWorkerReleaseConfirmed();
+                    if (route.prefillEndpoint() != null && mayReleasePrefill)
                         releaseFailure =
                                 Failures.run(
                                         releaseFailure,
@@ -886,7 +888,9 @@ public abstract class AbstractRequestScheduler implements RequestScheduler {
                                                 route.prefillEndpoint()
                                                         .releaseRequest(
                                                                 route.prefillRegistration()));
-                    prefillAndEncoderReleased = releaseFailure == null;
+                    prefillAndEncoderReleased =
+                            releaseFailure == null
+                                    && (route.prefillEndpoint() == null || mayReleasePrefill);
                 }
                 boolean remoteReleaseConfirmed =
                         state.committedRoute() != null
@@ -896,7 +900,7 @@ public abstract class AbstractRequestScheduler implements RequestScheduler {
                     if (!decodeReleased) {
                         var endpoint = route.decodeEndpoint();
                         var registration = route.decodeRegistration();
-                        if (remoteReleaseConfirmed || state.inactivityExpired()) {
+                        if (remoteReleaseConfirmed) {
                             // Remove local registration only; reported Worker occupancy remains
                             // authoritative.
                             if (endpoint != null && registration != null)
@@ -941,7 +945,9 @@ public abstract class AbstractRequestScheduler implements RequestScheduler {
         var state = ctx.snapshot();
         if (state.phase() != Phase.ENDING || state.notificationsDone()) return null;
         var delivery = state.committedRoute();
-        if (delivery != null && state.cancellationReason() != null) {
+        if (delivery != null
+                && delivery.prefillEndpoint() != null
+                && state.cancellationReason() != null) {
             var failure =
                     Failures.run(
                             null,
@@ -1015,6 +1021,7 @@ public abstract class AbstractRequestScheduler implements RequestScheduler {
         Registration publication = null;
         boolean committed = false;
         try {
+            long visibilityAtMs = route.predictedVisibilityAtMs(System.currentTimeMillis());
             synchronized (ctx) {
                 if (!repository.isCurrent(ctx)
                         || ctx.isResponseDone()
@@ -1032,7 +1039,7 @@ public abstract class AbstractRequestScheduler implements RequestScheduler {
                 long nowMs = System.currentTimeMillis();
                 var candidate = reserveResponse(ctx, ResponseKind.ACK);
                 publication = candidate;
-                committed = ctx.tryCommitRoute(attempt, route, candidate, nowMs);
+                committed = ctx.tryCommitRoute(attempt, route, candidate, nowMs, visibilityAtMs);
                 if (!committed) return SelectionResult.closed();
                 publication.prepare(RESPONSE, route.successResponse(), null);
             }

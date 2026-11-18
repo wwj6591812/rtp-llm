@@ -10,7 +10,7 @@ public final class TestFlexlbConfigs {
 
     public static FlexlbConfig create() {
         FlexlbConfig config = new FlexlbConfig();
-        config.getRequestLifecycle().getRequest().setTimeoutMs(3_600_000L);
+        config.getRequestLifecycle().setInactivityTimeoutMs(3_600_000L);
         return config;
     }
 }

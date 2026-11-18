@@ -377,7 +377,12 @@ final class RequestProtocolTestSupport {
                     "plannerCount",
                     Math.max(1, config.getInternalRuntime().getQueuePlannerThreads()));
 
-            var schedulingQueue = new OrderedRequestQueue(config.isPriorityOrdering());
+            var schedulingQueue =
+                    new OrderedRequestQueue(
+                            config.isPriorityOrdering(),
+                            config.queueScheduler().getOrdering().getPolicy().getType()
+                                    == org.flexlb.config.scheduler.QueueOrderingConfig.PolicyType
+                                            .PREFILL_COST);
             ReflectionTestUtils.setField(queue, "orderedQueue", schedulingQueue);
             ReflectionTestUtils.setField(
                     queue,

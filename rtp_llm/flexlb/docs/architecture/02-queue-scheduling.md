@@ -10,7 +10,7 @@ AbstractRequestScheduler 负责注册、期限、取消、响应及资源清理�
 具体调度器负责启动选址以及容量不足时的拒绝、等待或抢占策略。
 
 - DIRECT 立即进行一次选址，成功后返回路由；无法接纳时返回对应拒绝。
-- QUEUE 按 FIFO 或 PRIORITY 选择一个请求，成功后立即返回路由。
+- QUEUE 独立组合 priority.enabled 与 policy.type（FIFO / PREFILL_COST），成功后立即返回路由。
   没有可用机器或容量不足时保留全局队列成员，等待节点或容量变化再尝试。
   请求到期、取消或停止接纳后结束等待。
 
@@ -19,10 +19,26 @@ SINGLE 是固定行为，无须配置决策策略或交付模式。
 SchedulingQueue 直接保存 RequestContext；OrderedRequestQueue 的节点、成员索引与扫描游标不对外暴露。
 Scheduler 用 executing 记录尚未结束的任务，队列成员和任务各有一个负责位置。
 取消移除队列成员，但执行记录保留到选址或抢占结果清理结束，期间不会重复选路。
-容量不足的请求由 CapacityWaitQueue 按角色/分组暂停，每个等待域同时只允许一个请求重试。
-容量广播只开放等待域的一次检查并唤醒调度线程，不把扫描游标重置到队头；重试成功或取消后
-继续下一个，仍然容量不足则再次暂停。实际接纳数量由 Endpoint 决定，线程空位不代表资源容量。
-没有通知时每隔 capacityCheckIntervalMs 检查一次，默认 100ms；周期扫描仍排除未获重试机会的等待请求。
+容量不足的请求由 CapacityWaitQueue 按角色、分组暂停，同组请求可以按容量预算并行重试。
+CapacityKey 只标识角色、分组和可选端点，不包含候选集合。SelectionResult 携带本次选路的候选代际提示，
+CapacityWaitQueue 的 Waiter 按请求保存；重新挂起时替换，取消或离开等待时清除。
+容量通知优先唤醒提示匹配的请求；每次实际选路仍重新查询 cache，旧提示不限制下一次的候选范围。
+调度器收到 Endpoint 的容量通知后，读取同一资源版本下的剩余请求名额；共享同一 Worker 的等待域共同消耗这份重试预算，
+重复或晚到的旧版本通知不会增加名额。Prefill 预算同时受请求数与 Engine 队列水位限制；Decode 的请求数预算
+不能替代按请求进行的 KV 准入检查。实际容量仍由 Endpoint 在登记时核对，不把重试预算当作资源预留。
+一次重试取出后就消耗预算，选路失败或线程任务完成不补发名额；重试期间的新通知保留到重新挂起时处理。
+每隔 capacityCheckIntervalMs（默认 100ms）在调度锁外重新读取各 Worker 的本地容量快照，
+补偿漏通知；周期快照与通知使用同一份共享预算，旧快照不能覆盖较新的通知。
+唤醒按请求顺序单遍处理：先使用匹配候选的容量，没有匹配时可使用同组周期检查得到的容量重新选址。
+周期检查不要求旧提示仍然匹配，避免 cache 变化后一直等待旧候选；所有重试共用容量预算及 planner 名额。
+每个组按请求顺序处理一轮固定的等待集合；失败请求和新进入等待的请求留到下一轮，
+不遮住本轮尚未尝试的请求，也不让持续到来的请求无限延长本轮。容量通知和周期检查
+继续未完成的一轮，本轮结束后按优先级和先后顺序开始下一轮。没有请求空位时，每个 role/group 每轮只共享一次控制检查，用于恢复抢占或尚未观察到的容量变化；
+这不是 Engine 接纳名额。任务完成不会补发容量重试额度。
+plannerCount 限制并行调度任务，executing 统计已安排但未结束的选路、抢占恢复和估计刷新任务。
+容量重试从剩余线程名额内取出，普通队列每次扫描预算仍为 remaining × scanBudgetMultiplier（默认 2），
+PREFILL_COST 在分页扫描时维护候选顺序，从队首复核可选性。扫描和复核共用本轮预算，预算耗尽时从当前位置继续，每轮最多选出 remaining 个任务。首次选路继续负责识别候选及启动抢占，
+不以重试预算代替该流程。
 规划任务完成只继续未扫描部分或已经允许的容量重试。
 抢占结果回调只交回待执行动作；恢复选路与普通选路共用 plannerCount 个执行名额。
 关闭先停止接纳并结束排队请求，保留规划线程处理晚到结果，待任务清理完成后关闭线程池。
@@ -32,7 +48,7 @@ Scheduler 用 executing 记录尚未结束的任务，队列成员和任务各�
 RequestRouteSelector 选择所需角色并登记资源，部分角色失败时撤销已取得的登记。
 完整路由构造后直接交给 Scheduler；executeRouteSelection 统一将资源关联到 Context，
 再校验端点并提交或回滚。Selector 和路由发布入口不重复关联 Context。
-PrefillEndpoint 在登记时检查当前代际、资源版本和 compute-token 容量；
+PrefillEndpoint 在登记时检查当前代际、工作量、请求数上限及适用的 Engine 队列水位；
 DecodeEndpoint 独立检查 KV 和请求容量。
 
 选址成功后，Scheduler 在请求锁内再次核对期限、取消和精确选址身份，
@@ -52,13 +68,25 @@ PrefillTimePredictor 只计算 computeTokens：
     computeTokens = max(0, inputTokens - effectiveCacheHitTokens)
 
 Endpoint 按请求保存已登记的 compute tokens。
-选址按节点已有工作量加当前请求的 compute tokens 评分；
-每台机器的硬容量使用 router.roles.prefill.maxComputeTokens。
-启用 cache first 时，cacheAffinity.maxComputeTokens 是另一条绝对上限；
-两条上限都检查加入当前请求后的总工作量，超限的机器直接跳过，全部不满足则等待。
-缓存命中更高也不能越过上限。
-没有时间公式、在线学习、批量预测、虚拟插队或未来组批模拟。
-经过的墙上时间不扣减 token 工作量。
+选址的评分与准入分别处理：普通 COST_BASED 保留当前 cache affinity；TOKEN_BALANCE 每次选路按当前 cache 查询结果确定热缓存候选组。
+最大命中量与候选代际一次计算形成 CacheCandidates，节点选择与阻塞结果共用这份事实；没有独立的重试候选策略。
+统一请求数上限默认 128，Engine 已有但本地未知的请求也计入；没有计算量硬上限。
+Engine 队列准入属于 TOKEN_BALANCE，默认 waitingThreshold=10。
+waiting > threshold - unobserved 时立即阻止新增；没有单独的持续拥塞计时配置。
+
+OrderedRequestQueue 保存唯一成员索引并直接提供 FIFO 顺序；启用成本排序时组合 PrefillCostOrder。
+PREFILL_COST 按 compute/input 的精确比例、compute、input、入队顺序排序；优先级启用时先比较 priority。
+估计未知时保留稳定顺序，运行中的高优先级或更低比例请求限制后续规划，并列请求可以并行。
+仅实际选路参与运行中请求的优先级和成本仲裁。估计刷新复用有限 planner 名额，缓存查询在调度锁外执行，旧刷新票据不能回写恢复后的新队列成员。
+热缓存候选代际只作为请求级唤醒提示，不参与容量等待域的身份。
+
+requestLifecycle 位于顶层：dispatchTimeoutMs 默认 60000，DIRECT/QUEUE 都从入口计到路由提交；
+inactivityTimeoutMs 默认 60000，从提交开始，仅匹配该路由的 Engine 请求反馈续期。
+engineVisibilityMultiplier 默认 2.0。可见性使用单请求估计毫秒数
+computeTokens + 0.02 × reusedTokens。PrefillEndpoint 估计此前工作与当前请求的剩余时长，
+AbstractRequestScheduler 乘系数、加 10000ms 观察余量并生成绝对期限。
+缺少可靠工作量/耗时则不预测；排序分数与时间估计不混用，墙上时间不扣减 token 工作量。
+ExpirationTimer 继续管理 REQUEST、INACTIVITY、VISIBILITY；VISIBILITY 仅诊断，不结束或释放请求。
 
 ## 请求状态与结束
 
@@ -100,9 +128,9 @@ finishSelectionWithoutCommit，落实等待中的取消或失败，再由调度�
 部分失败保留已成功的进度。归档还要求响应已选定或 Future 已完成。
 选址回滚由 rollbackSelectedRouteResources 撤销本次取得的登记，不隐含结束选址；
 退出选址时由 finishUnpublishedRoute 先回滚，再完成选址收尾。
-cleanupRequest 直接依据提交情况、P/D 远端释放确认和无反馈过期推进结束清理，
-不再通过释放原因枚举选择动作。已提交但释放依据不足时保留 Decode 登记；
-未提交时只删除未确认登记；无反馈过期移除本地记录不清除 Worker 上报占用。
+cleanupRequest 依据提交情况和 P/D 远端释放确认推进清理。未提交的资源安全回滚；
+已提交但没有完成、清理、隔离或代际关闭证据时保留登记与容量。无反馈超时进入统一结束和取消流程，
+不直接删除在途资源。正常响应已确定但另一角色迟迟未释放时，也由无反馈超时启动取消，保留原响应结果。
 Timing 统一保存观测时间：AtMs 是 Unix 毫秒时间点，Nanos 是单调时钟时间点，ElapsedUs/DelayMs 是耗时。
 登记时间同时用于队列观测和生命周期查询；没有第二份 enqueueTime。已废弃的 ACK 阶段及其延迟统计不再保留。
 PreemptionStatistics 一次保存已提交抢占的诊断成本和请求数量，成本不解释为毫秒。
@@ -129,8 +157,8 @@ scheduleRequestCleanup 统一安排执行顺序：Endpoint 关闭先发布响应
 
 Decode 抢占由具体 DecodePreemptionPlanner 选择请求，DefaultRequestPreemption 执行普通取消并等待 Endpoint 的容量变化。
 RequestContext 不保留独立抢占事务、取消阶段或恢复交付协议。
-RPC 模式由 EngineCancellation 向原引擎发送单请求 Cancel，并处理有界重试和晚到回复；
-RETURN 模式将取消指令交给调用方透传。
+EngineCancellation 向原引擎发送单请求 Cancel，处理有界重试和晚到回复；一轮耗尽后仍保留精确路由，
+由定时恢复入口继续下一轮。关闭时停止恢复并等待已提交回调。
 Scheduler.cancel 记录本地取消并提交清理后返回，不等待引擎回复，也不表示容量已经释放。
 EngineCancellation 通过 Scheduler.onEngineCancelReply 回报结果，由 Scheduler 校验原请求身份、
 转换清理事件并推进资源释放；Context 校验具体路由。已归档请求的晚到回复被忽略，

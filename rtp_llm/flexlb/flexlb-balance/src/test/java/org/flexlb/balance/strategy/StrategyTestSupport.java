@@ -52,7 +52,7 @@ final class StrategyTestSupport {
 
     static FlexlbConfig config() {
         FlexlbConfig config = new FlexlbConfig();
-        config.getRequestLifecycle().getRequest().setTimeoutMs(60_000L);
+        config.getRequestLifecycle().setInactivityTimeoutMs(60_000L);
         return config;
     }
 

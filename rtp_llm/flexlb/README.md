@@ -177,59 +177,80 @@ cd rtp_llm/flexlb
 
 `FLEXLB_CONFIG` is a required JSON environment variable. It configures scheduling,
 delivery, routing, worker synchronization, and observability; file paths are not accepted.
-The online loader accepts schema 3 only. Duplicate keys, unknown or inactive fields,
+The online loader accepts schema 5. Duplicate keys, unknown or inactive fields,
 `null`, scalar coercion, numeric enums, and trailing JSON fail startup.
 
-| Setting                                             | Schema 3 behavior                                                                                                                                                                         |
-| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Prefill ownership                                   | Work remains tracked until authoritative completion, safe rollback or retirement. PDFUSION has no distinct Prefill-completion signal, so its ownership lasts through request termination. |
-| `requestLifecycle.request.timeoutMs`                | Required positive integer; maximum request inactivity in milliseconds, renewed by matching Engine request status. No default.                                                             |
-| `workerRegistry.health.cleanupIntervalMs`           | Positive integer, default 3000 ms; scan interval for retiring workers whose status exceeds `statusStaleAfterMs`.                                                                          |
-| `scheduler.queueTimeoutMs`                          | QUEUE only, positive, default 3600000 ms; actual queue TTL. DIRECT has no queue timer and rejects this field.                                                                             |
-| Removed routing controls                            | Prefill candidate randomization/LRU and outlier filters, legacy Decode decay controls/outlier filters, and output-estimate truncation are rejected.                                       |
-| `router.roles.decode.costEstimator.expression`      | Default `kvcache_used_ratio`; smallest cost wins within the same availability tier. Using `max_running_size` requires a positive `availability.maxEngineRequests`.                        |
-| `scheduler.ordering.preemption.timeoutMs`           | Default 1000 ms, positive; Engine-owned Decode preemption only. Starts after the Cancel ACK phase and bounds the wait for the Engine terminal. ACK timeout stays internal, 50 ms.         |
-| `scheduler.ordering.preemption.allowedVictimStages` | PRIORITY supports `DECODE_ENGINE_OWNED`, including when `preemption` is omitted. An explicit non-empty list replaces the defaults.                                                        |
+| Setting                                                      | Schema 5 behavior                                                                                                                                                                         |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Prefill ownership                                            | Work remains tracked until authoritative completion, safe rollback or retirement. PDFUSION has no distinct Prefill-completion signal, so its ownership lasts through request termination. |
+| `requestLifecycle.inactivityTimeoutMs`                       | Positive integer, default 60000 ms; starts at route commit and renews on matching Engine request status.                                                                                  |
+| `workerRegistry.health.cleanupIntervalMs`                    | Positive integer, default 3000 ms; scan interval for retiring workers whose status exceeds `statusStaleAfterMs`.                                                                          |
+| `requestLifecycle.dispatchTimeoutMs`                         | Positive integer, default 60000 ms; absolute admission-to-route-commit deadline in DIRECT and QUEUE.                                                                                      |
+| Removed routing controls                                     | Prefill candidate randomization/LRU and outlier filters, legacy Decode decay controls/outlier filters, and output-estimate truncation are rejected.                                       |
+| `router.roles.decode.costEstimator.expression`               | Default `running_size`; smallest cost wins within the same availability tier. Using `max_running_size` requires a positive `availability.maxEngineRequests`.                              |
+| `scheduler.ordering.priority.preemption.timeoutMs`           | Default 1000 ms, positive; Engine-owned Decode preemption only. Starts after the Cancel ACK phase and bounds the wait for the Engine terminal. ACK timeout stays internal, 50 ms.         |
+| `scheduler.ordering.priority.preemption.allowedVictimStages` | PRIORITY supports `DECODE_ENGINE_OWNED`, including when `preemption` is omitted. An explicit non-empty list replaces the defaults.                                                        |
 
 The request timeout below is an explicit workload value:
 
 ```bash
 export FLEXLB_CONFIG='{
-  "schemaVersion": 4,
+  "schemaVersion": 5,
+  "requestLifecycle": {
+    "dispatchTimeoutMs": 60000,
+    "inactivityTimeoutMs": 60000,
+    "engineVisibilityMultiplier": 2.0
+  },
   "scheduler": {
     "type": "QUEUE",
-    "queueTimeoutMs": 3600000,
-    "ordering": {"type": "FIFO"}
-  },
-  "requestLifecycle": {
-    "request": {"timeoutMs": 60000}
+    "ordering": {
+      "priority": {
+        "enabled": false
+      },
+      "policy": {
+        "type": "FIFO"
+      }
+    }
   },
   "router": {
     "roles": {
-      "prefill": {"maxComputeTokens": 1048576},
+      "prefill": {
+        "admission": {
+          "maxInflightRequests": 128
+        }
+      },
       "decode": {
-        "costEstimator": {"expression": "kvcache_used_ratio"},
-        "availability": {"maxKvUsagePercent": 90, "maxEngineRequests": 128}
+        "costEstimator": {
+          "expression": "kvcache_used_ratio"
+        },
+        "availability": {
+          "maxKvUsagePercent": 90,
+          "maxEngineRequests": 128
+        }
       }
     }
   }
 }'
 ```
 
-Omit `router.roles.decode.costEstimator` to balance by KV usage ratio. Set its
-`expression` to `running_size` to balance by request load, or use a formula to combine metrics:
+Omit `router.roles.decode.costEstimator` to balance by request load. Set its
+`expression` to `kvcache_used_ratio` to retain KV-ratio balancing, or use a formula to combine metrics:
 
 ```json
 {
-  "schemaVersion": 4,
-  "requestLifecycle": { "request": { "timeoutMs": 60000 } },
+  "schemaVersion": 5,
+  "requestLifecycle": {
+    "inactivityTimeoutMs": 60000
+  },
   "router": {
     "roles": {
       "decode": {
         "costEstimator": {
           "expression": "0.3 * running_size / max_running_size + 0.7 * kvcache_used_ratio"
         },
-        "availability": { "maxEngineRequests": 128 }
+        "availability": {
+          "maxEngineRequests": 128
+        }
       }
     }
   }
@@ -237,13 +258,62 @@ Omit `router.roles.decode.costEstimator` to balance by KV usage ratio. Set its
 ```
 
 `workerRegistry`, `observability.cacheHit`, and `router.groupSelector` remain available.
-Only schema 3 is accepted. Write the configuration directly with explicit values for
-`requestLifecycle.request.timeoutMs`, which has no default. A matching Engine request
-status renews this deadline. Once it expires, FlexLB releases the exact local
-request and its reservations even if delivery acknowledgement or Engine request status is missing.
-Only priority preemption may send an Engine Cancel RPC. Delivery uncertainty,
-request inactivity expiry, and client-cancellation bookkeeping remain local to the Master.
-`requestLifecycle.decision.lifetime` defaults to 2.0. There is no legacy-schema conversion layer.
+Schema 5 separates `requestLifecycle`, queue ordering, Prefill selection and admission.
+Lifecycle defaults are dispatch 60000 ms, inactivity 60000 ms and visibility multiplier 2.0.
+Visibility uses the upstream singleton time model (compute tokens plus 0.02 times reused tokens,
+in milliseconds) and a 10000 ms observation allowance. Unknown preceding work suppresses the prediction.
+A visibility deadline is diagnostic; it never releases resources. Local timeout or a Cancel ACK does
+not prove remote release. Exact registrations remain until matching completion, fenced/cleaned evidence
+or generation closure; unresolved cancellation continues in bounded retry rounds.
+
+Prefill `selection.type` is `COST_BASED` or `TOKEN_BALANCE`. Ordinary `cacheAffinity`
+remains under COST_BASED and can fall back to another admissible worker. TOKEN_BALANCE keeps hot requests
+on the maximum-hit candidates; cold requests balance outstanding token work.
+Shared `remoteDiscount` defaults to 0.2. Shared `admission.maxInflightRequests` defaults to 128.
+TOKEN_BALANCE additionally defaults to Engine waiting threshold 10 and sustained overload 5000 ms.
+These are admission observations, independent of request timers.
+The following configuration enables priority plus cost ordering and TOKEN_BALANCE:
+
+```json
+{
+  "schemaVersion": 5,
+  "requestLifecycle": {
+    "dispatchTimeoutMs": 60000,
+    "inactivityTimeoutMs": 60000,
+    "engineVisibilityMultiplier": 2.0
+  },
+  "scheduler": {
+    "type": "QUEUE",
+    "ordering": {
+      "priority": { "enabled": true, "defaultPriority": 50 },
+      "policy": { "type": "PREFILL_COST" }
+    }
+  },
+  "router": {
+    "roles": {
+      "prefill": {
+        "remoteDiscount": 0.2,
+        "selection": { "type": "TOKEN_BALANCE", "minPrefixHitPercent": 5 },
+        "admission": {
+          "maxInflightRequests": 128,
+          "engineQueue": { "waitingThreshold": 10 }
+        }
+      }
+    }
+  }
+}
+```
+
+For ordinary cache affinity, replace selection with
+`{"type":"COST_BASED","cacheAffinity":{"minPrefixHitPercent":5}}` and omit
+`admission.engineQueue`. For DIRECT, replace the entire scheduler object with
+`{"type":"DIRECT"}`; Prefill selection, admission and lifecycle still apply.
+
+QUEUE composes `ordering.priority.enabled` with `ordering.policy.type` (FIFO or PREFILL_COST).
+DIRECT accepts neither ordering nor queue scan/wait controls. Legacy compute-token caps have no numeric
+equivalent in request-count admission: schema 4 and removed fields fail validation rather than being
+silently converted. Move legacy inactivity to `inactivityTimeoutMs` and queue timeout to the shared
+`dispatchTimeoutMs`, explicitly reviewing its new DIRECT behavior.
 
 `MODEL_SERVICE_CONFIG` still describes service discovery and endpoint topology; it is
 not a second FlexLB behavior configuration:
@@ -329,15 +399,16 @@ are destroyed. Normal idle serving does not start an exit timer.
 
 ### Single-request scheduling
 
-QUEUE considers one request at a time, using FIFO or PRIORITY ordering. It selects workers,
+QUEUE considers one request at a time, composing optional PRIORITY with FIFO or PREFILL_COST ordering. It selects workers,
 registers capacity and returns the complete route immediately. When no worker has enough
 capacity, the request waits in the global queue for a capacity notification.
 DIRECT performs the same selection immediately and reports capacity failures to its caller.
 
 Prefill work is the input tokens that require computation after cache reuse.
-Each worker is limited by router.roles.prefill.maxComputeTokens (default 1048576).
-With cacheAffinity configured, prefer cache hits within cacheAffinity.maxComputeTokens;
-when omitted, that cap inherits the worker limit. Full candidates are skipped.
+Each worker admits at most `router.roles.prefill.admission.maxInflightRequests` outstanding requests
+(default 128), including Engine requests absent from the local ledger. COST_BASED cache affinity
+prefers admissible cache hits and falls back when necessary. TOKEN_BALANCE fixes hot requests to
+the maximum-hit cohort before admission filtering. Compute tokens rank candidates; there is no token cap.
 No collection window, future batch simulation, learned timing or batch RPC is involved.
 
 Configuration example: [QUEUE + PRIORITY](docs/config-examples/flexlb-queue-priority.json).
@@ -349,7 +420,7 @@ feasible route while Decode is busy and wait for a permit at delivery. With Deco
 enabled, placement also counts queued reservations and can reclaim allowed lower-priority owners.
 Selection prefers workers with current dispatch capacity over feasible workers that must wait.
 Within that availability tier, Decode minimizes `router.roles.decode.costEstimator.expression`,
-which defaults to `kvcache_used_ratio`. Formulas support `+`, `-`, `*`, `/`, `^`,
+which defaults to `running_size`. Formulas support `+`, `-`, `*`, `/`, `^`,
 parentheses and `sqrt`, `log`, `exp`, `abs`, `max`, `min`, `pow`, and `param(name, initialValue)` functions.
 Decode formulas do not use `sum`. Available variables are:
 
@@ -442,7 +513,7 @@ own request. This does not provide cross-node deduplication for frontend retries
 
 - **FlexLB behavior**: one strict JSON document in `FLEXLB_CONFIG`.
 - **Prefill work**: input tokens minus reusable cache tokens; no execution-time model.
-- **Prefill capacity**: `router.roles.prefill.maxComputeTokens`.
+- **Prefill capacity**: `router.roles.prefill.admission.maxInflightRequests`.
 - **Routing parameters**: Prefill execution-time estimation/cache affinity and Decode
   cost formulas/admission thresholds under `router.roles`.
 - **Traffic group selection**: `router.groupSelector` inside the same document.

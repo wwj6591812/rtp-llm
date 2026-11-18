@@ -7,7 +7,9 @@ import org.flexlb.balance.queue.SchedulingQueue;
 import org.flexlb.balance.requestlog.TheoryCacheHitReporter;
 import org.flexlb.balance.strategy.CostBasedPrefillStrategy;
 import org.flexlb.balance.strategy.DecodeStrategy;
+import org.flexlb.balance.strategy.PrefillSelectionStrategy;
 import org.flexlb.balance.strategy.RequestRouteSelector;
+import org.flexlb.balance.strategy.TokenBalancedPrefillStrategy;
 import org.flexlb.balance.strategy.VitStrategy;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.FlexlbConfig;
@@ -86,13 +88,22 @@ public class SchedulerConfiguration {
 
     @Bean
     @Lazy
-    @ConditionalOnMissingBean(CostBasedPrefillStrategy.class)
-    public CostBasedPrefillStrategy prefillStrategy(
+    @ConditionalOnMissingBean(PrefillSelectionStrategy.class)
+    public PrefillSelectionStrategy prefillStrategy(
             ConfigService config,
             EndpointRegistry endpoints,
             org.flexlb.cache.match.CacheAwareService cache,
             org.flexlb.cache.metrics.CacheMetricsReporter metrics) {
-        return new CostBasedPrefillStrategy(config, endpoints, cache, metrics);
+        return config.loadBalanceConfig()
+                                .getRouter()
+                                .getRoles()
+                                .getPrefill()
+                                .getSelection()
+                                .getType()
+                        == org.flexlb.config.routing.RoutingConfig.PrefillSelectionType
+                                .TOKEN_BALANCE
+                ? new TokenBalancedPrefillStrategy(config, endpoints, cache, metrics)
+                : new CostBasedPrefillStrategy(config, endpoints, cache, metrics);
     }
 
     @Bean
@@ -173,7 +184,10 @@ public class SchedulerConfiguration {
     @Lazy
     @ConditionalOnMissingBean(SchedulingQueue.class)
     SchedulingQueue schedulingQueue(ConfigService config) {
-        return new OrderedRequestQueue(config.loadBalanceConfig().isPriorityOrdering());
+        return new OrderedRequestQueue(
+                config.loadBalanceConfig().isPriorityOrdering(),
+                config.loadBalanceConfig().queueScheduler().getOrdering().getPolicy().getType()
+                        == org.flexlb.config.scheduler.QueueOrderingConfig.PolicyType.PREFILL_COST);
     }
 
     @Bean

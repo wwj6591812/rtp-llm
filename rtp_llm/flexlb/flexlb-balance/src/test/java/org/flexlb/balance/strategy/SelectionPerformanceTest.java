@@ -38,7 +38,7 @@ class SelectionPerformanceTest {
         var service =
                 new ConfigService(
                         """
-                {"requestLifecycle":{"request":{"timeoutMs":60000}},
+                {"requestLifecycle":{"inactivityTimeoutMs": 60000},
                  "scheduler":{"type":"%s"}}
                 """
                                 .formatted(direct ? "DIRECT" : "QUEUE"));

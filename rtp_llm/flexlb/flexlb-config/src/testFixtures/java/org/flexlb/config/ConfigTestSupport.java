@@ -18,14 +18,14 @@ public final class ConfigTestSupport {
 
     public static QueueOrderingConfig priority() {
         QueueOrderingConfig config = new QueueOrderingConfig();
-        config.setType(QueueOrderingConfig.Type.PRIORITY);
+        config.getPriority().setEnabled(true);
         return config;
     }
 
     public static java.util.Optional<PreemptionConfig> preemptionPolicy(
             QueueOrderingConfig ordering) {
-        return ordering.getType() == QueueOrderingConfig.Type.PRIORITY
-                ? java.util.Optional.ofNullable(ordering.getPreemption())
+        return ordering.getPriority().isEnabled()
+                ? java.util.Optional.ofNullable(ordering.getPriority().getPreemption())
                 : java.util.Optional.empty();
     }
 }

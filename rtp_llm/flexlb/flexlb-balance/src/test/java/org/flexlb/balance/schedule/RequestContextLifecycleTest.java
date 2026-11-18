@@ -79,44 +79,13 @@ class RequestContextLifecycleTest {
     }
 
     @Test
-    void pendingWorkerEndKeepsInactivityRecheckInstalledUntilPlacementFinishes() throws Exception {
+    void selectionDoesNotStartWorkerInactivityBeforeRouteCommit() throws Exception {
         var context = RequestProtocolTestSupport.context(config, 895L);
         var future = RequestProtocolTestSupport.submitForManualPlacement(lifecycle, context);
-        var route =
-                SchedulingTestConfig.createRoute(
-                        context,
-                        new Response(),
-                        null,
-                        null,
-                        mock(PrefillEndpoint.class),
-                        null,
-                        null,
-                        System.currentTimeMillis());
         var admission = SchedulerTestSupport.claim(lifecycle, "895", future);
         try (var completion = RequestProtocolTestSupport.finishOnExit(admission)) {
-            assertNotNull(lifecycle.currentSelectionAttempt(route));
-            context.registerSelectedRoute(admission, route);
-            var original = context.snapshot().deadlines().inactivity();
-            WorkerEventTestSupport.publish(
-                    lifecycle,
-                    context,
-                    new WorkerEventTestSupport.RequestEvent(
-                            route,
-                            null,
-                            org.flexlb.config.service.RoleType.PDFUSION,
-                            null,
-                            org.flexlb.worker.endpoint.RequestEventType.COMPLETED,
-                            0L,
-                            "worker complete",
-                            original.atMs() - 1));
-            assertNull(context.snapshot().endState());
-            lifecycle.onDeadline(original, original.atMs());
-            awaitCondition(() -> context.snapshot().deadlines().inactivity() != original);
-            awaitCondition(
-                    () ->
-                            !SchedulerTestSupport.runtime(lifecycle)
-                                    .deadlines()
-                                    .needsUpdate(context, context.snapshot().deadlines()));
+            assertNull(context.snapshot().deadlines().inactivity());
+            assertNotNull(context.snapshot().deadlines().request());
             assertNull(context.snapshot().endState());
             assertFalse(future.isDone());
         }
@@ -473,13 +442,12 @@ class RequestContextLifecycleTest {
     }
 
     @Test
-    void globalCloseConsumesAnAcceptedInactivityFactBeforeShutdownFailure() throws Exception {
+    void globalCloseConsumesAnAcceptedDispatchDeadlineBeforeShutdownFailure() throws Exception {
         CompletableFuture<Response> future =
                 RequestProtocolTestSupport.submitForManualPlacement(lifecycle, context(10002L));
         RequestContext context = lifecycle.repository.findActive("10002");
         lifecycle.onDeadline(
-                RequestProtocolTestSupport.<ExpirationTimer.Token>field(
-                        context, "inactivityDeadline"),
+                RequestProtocolTestSupport.<ExpirationTimer.Token>field(context, "requestDeadline"),
                 Long.MAX_VALUE);
         lifecycle.closeRequest(
                 context,
@@ -682,6 +650,7 @@ class RequestContextLifecycleTest {
                             cleanupThread.set(Thread.currentThread());
                             return true;
                         });
+        context.recordRemoteCleanup(item, true, System.currentTimeMillis());
         RequestContext requestContext = lifecycle.repository.findActive("708");
         lifecycle.onDeadline(
                 RequestProtocolTestSupport.<ExpirationTimer.Token>field(
@@ -722,6 +691,7 @@ class RequestContextLifecycleTest {
                     RequestProtocolTestSupport.commitRoute(
                             lifecycle, item, RequestProtocolTestSupport.publication(() -> true)));
         }
+        context.recordRemoteCleanup(item, true, System.currentTimeMillis());
         RequestContext requestContext = lifecycle.repository.findActive("709");
         lifecycle.onDeadline(
                 RequestProtocolTestSupport.<ExpirationTimer.Token>field(

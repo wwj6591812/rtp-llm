@@ -15,6 +15,11 @@ import java.util.function.Predicate;
  * Membership is keyed by request identity; queue nodes are private implementation details.
  */
 public interface SchedulingQueue {
+    /** Claims refresh work under the scheduler lock. Complete it under the same lock. */
+    default List<EstimateRequest> estimates(int limit) {
+        return List.of();
+    }
+
     void add(RequestContext entry);
 
     boolean contains(RequestContext request);
@@ -46,4 +51,30 @@ public interface SchedulingQueue {
     List<RequestContext> drain();
 
     Comparator<RequestContext> order();
+
+    /**
+     * One exact refresh attempt; a later ticket for the same request is a different operation.
+     */
+    final class EstimateRequest {
+        private final RequestContext request;
+        private java.util.function.Consumer<java.util.OptionalLong> completion;
+
+        public EstimateRequest(
+                RequestContext request,
+                java.util.function.Consumer<java.util.OptionalLong> completion) {
+            this.request = request;
+            this.completion = completion;
+        }
+
+        public RequestContext request() {
+            return request;
+        }
+
+        public void complete(java.util.OptionalLong estimate) {
+            if (completion == null) return;
+            var action = completion;
+            completion = null;
+            action.accept(estimate);
+        }
+    }
 }

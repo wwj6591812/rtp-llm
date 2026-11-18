@@ -58,7 +58,7 @@ final class DefaultRequestPreemption implements RequestPreemption {
         var settings = config.loadBalanceConfig();
         this.preemption =
                 settings.isQueue() && settings.isPriorityOrdering()
-                        ? settings.priorityOrdering().getPreemption()
+                        ? settings.priorityOrdering().getPriority().getPreemption()
                         : null;
         this.limit = Math.max(1, settings.getInternalRuntime().getQueuePlannerThreads());
     }

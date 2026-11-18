@@ -1450,19 +1450,18 @@ class FlexlbServiceImplTest {
         assertEquals(2048L, capturedRequest.getSeqLen());
         assertEquals(Request.DEFAULT_GENERATE_TIMEOUT_MS, capturedRequest.getGenerateTimeout());
         assertEquals(
-                capturedCtx.getTiming().startedAtMs() + 3_600_000L,
+                capturedCtx.getTiming().startedAtMs() + 60_000L,
                 capturedCtx.getRequestExpiresAtMs());
     }
 
     @Test
-    void queueTimeoutComesFromFlexlbConfigAndOverridesCallerTimeout() {
+    void dispatchTimeoutComesFromFlexlbConfigAndOverridesCallerTimeout() {
         FlexlbConfig queueConfig =
                 ConfigService.parse(
                         """
                 {
-                  "scheduler":{"type":"QUEUE","queueTimeoutMs":7777,
-                    "ordering":{"type":"FIFO"}},
-                  "requestLifecycle":{"request":{"timeoutMs":3600000}}
+                  "scheduler":{"type":"QUEUE","ordering":{"policy":{"type":"FIFO"}}},
+                  "requestLifecycle":{"dispatchTimeoutMs":7777,"inactivityTimeoutMs":3600000}
                 }
                 """);
         when(configService.loadBalanceConfig()).thenReturn(queueConfig);
@@ -1488,13 +1487,13 @@ class FlexlbServiceImplTest {
     }
 
     @Test
-    void directModeHasNoSchedulingTimeout() {
+    void directModeUsesDefaultDispatchTimeout() {
         FlexlbConfig directConfig =
                 ConfigService.parse(
                         """
                 {
                   "scheduler":{"type":"DIRECT"},
-                  "requestLifecycle":{"request":{"timeoutMs":3600000}}
+                  "requestLifecycle":{"inactivityTimeoutMs": 3600000}
                 }
                 """);
         when(configService.loadBalanceConfig()).thenReturn(directConfig);
@@ -1515,7 +1514,9 @@ class FlexlbServiceImplTest {
                         .build(),
                 mock(StreamObserver.class));
 
-        assertEquals(Long.MAX_VALUE, context.getValue().getRequestExpiresAtMs());
+        assertEquals(
+                context.getValue().getTiming().startedAtMs() + 60_000L,
+                context.getValue().getRequestExpiresAtMs());
     }
 
     @Test

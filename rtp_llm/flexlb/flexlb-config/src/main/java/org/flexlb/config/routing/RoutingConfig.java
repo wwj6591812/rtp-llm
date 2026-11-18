@@ -42,36 +42,67 @@ public final class RoutingConfig {
     }
 
     /**
-     * Limits each Prefill worker's compute-token work and configures cache-first selection.
+     * Separates Prefill ranking, cache estimates and atomic admission limits.
      */
     @Getter
     @Setter
     public static final class PrefillConfig {
-        private long maxComputeTokens = 1_048_576L;
-        private String costExpression = "computeTokens";
-        private CacheAffinityConfig cacheAffinity;
+        private double remoteDiscount = 0.2;
+        private PrefillSelectionConfig selection = new PrefillSelectionConfig();
+        private PrefillAdmissionConfig admission = new PrefillAdmissionConfig();
+
+        @JsonIgnore
+        public EngineQueueConfig engineQueueAdmission() {
+            if (admission.getEngineQueue() != null) return admission.getEngineQueue();
+            return selection.getType() == PrefillSelectionType.TOKEN_BALANCE
+                    ? new EngineQueueConfig()
+                    : null;
+        }
     }
 
     /**
-     * Prefers cache hits among workers whose resulting compute-token work fits the configured cap.
+     * Selects the node-ranking algorithm without changing Endpoint resource accounting.
+     */
+    @Getter
+    @Setter
+    public static final class PrefillSelectionConfig {
+        private PrefillSelectionType type = PrefillSelectionType.COST_BASED;
+        private String costExpression = "computeTokens";
+        private CacheAffinityConfig cacheAffinity;
+        private double minPrefixHitPercent = 5;
+    }
+
+    public enum PrefillSelectionType {
+        COST_BASED,
+        TOKEN_BALANCE
+    }
+
+    /**
+     * Bounds outstanding Prefill registrations and optionally accounts for Engine waiting pressure.
+     */
+    @Getter
+    @Setter
+    public static final class PrefillAdmissionConfig {
+        private int maxInflightRequests = 128;
+        private EngineQueueConfig engineQueue;
+    }
+
+    /**
+     * Configures the Engine waiting watermark for TOKEN_BALANCE.
+     */
+    @Getter
+    @Setter
+    public static final class EngineQueueConfig {
+        private long waitingThreshold = 10;
+    }
+
+    /**
+     * Prefers reusable prefixes among nodes that pass the shared admission checks.
      */
     @Getter
     @Setter
     public static final class CacheAffinityConfig {
-        /**
-         * Absolute worker work after registration; null inherits Prefill maxComputeTokens.
-         */
-        private Long maxComputeTokens;
-
-        /**
-         * Minimum reusable-prefix percentage required before affinity applies.
-         */
         private double minPrefixHitPercent = 5;
-
-        /**
-         * Credit applied to remote-source cache matches when estimating effective hit tokens.
-         */
-        private double remoteDiscount = 0.2;
     }
 
     /**
@@ -90,7 +121,7 @@ public final class RoutingConfig {
     @Getter
     @Setter
     public static final class DecodeCostEstimatorConfig {
-        private volatile String expression = "kvcache_used_ratio";
+        private volatile String expression = "running_size";
 
         @JsonIgnore
         @Getter(AccessLevel.NONE)

@@ -44,28 +44,27 @@ native allocation 的实际占用仍取决于负载。
 `EnvironmentConfigSource` 仍负责读取独立的 `MODEL_SERVICE_CONFIG` 启动拓扑。
 来源选择和连接参数在启动时确定，修改它们需要重启进程。
 
-三种来源都返回原始字符串，复用 `ConfigDocumentParserResolver` 和 v0/v3 解析器：
+三种来源都返回原始字符串，复用 `ConfigDocumentParserResolver` 和 v0/v5 解析器：
 优先使用文档内的 `schemaVersion`，否则使用 `FLEXLB_CONFIG_SCHEMA_VERSION`（默认 `0`）。
 UniConfig 和 Nacos 的内容直接使用同一种配置 JSON，不增加包装层。
 
 格式归一化后，由现有 `FlexlbConfigMerger` 执行递归部分更新：
 对象字段递归覆盖，未出现或从外部配置删除的字段保留当前内存值，数组和标量整体替换；
-`cacheMatching`、`consistency`、`scheduler.ordering` 和 `scheduler.decision` 的 `type`
-变化会替换整个分支，避免保留新模式不支持的抢占或凑批参数。`scheduler`、`dispatcher`
-自身的 `type` 字段变化仍按递归覆盖处理，
-保留未出现的兄弟字段。v4 文档 `{"schemaVersion":4}` 是 no-op；
+`cacheMatching`、`consistency`、`scheduler.ordering.policy` 和 `router.roles.prefill.selection` 的 `type`
+变化会替换整个分支，避免保留新策略不支持的字段。`scheduler.type` 的启动模式保持不变。
+v5 文档 `{"schemaVersion":5}` 是 no-op；
 没有显式版本的 `{}` 则按版本选择规则解析，默认走 v0 兼容转换。
 每次合并后都使用与 `FLEXLB_CONFIG` 相同的严格解析和跨字段校验：
 
 - 拒绝重复 key、未知字段、`null`、标量 coercion、数值枚举和尾随 JSON；
 - 拒绝 tagged union 非活动分支的字段；
-- 拒绝违反 scheduler / dispatcher / router 等组合约束的配置。
+- 拒绝违反 scheduler / router 等组合约束的配置。
 
 选定的外部来源初次读取或校验失败会阻止应用启动，不会自动切换到低优先级来源。
 运行时读取失败或非法更新不会替换当前 last-known-good 快照，后续更新恢复正常后
 继续应用；合法更新原子替换 `FlexlbConfig`，随后通知监听器。
 
-`scheduler.type`、`dispatcher.type` 和 `scheduler.decision.type` 在启动时确定，运行时保持
+`scheduler.type` 在启动时确定，运行时保持
 当前模式。部分更新中已知但不同的模式值会被忽略，同一对象中的数值参数仍继续合并；未知模式值
 仍会校验失败并保留当前快照。切换模式需要重启 Master，并在启动文档中配置完整的目标分支。
 其余业务组件每次读取快照的参数可以热生效；在 Bean 初始化时缓存的值，则在重启后生效。
@@ -121,10 +120,10 @@ Java 还可能等待接近 30 秒才发现新内容。因此两段等待叠加�
 
 ### Decode 抢占交付方式
 
-`scheduler.ordering.preemption.allowedVictimStages` 包含 `DECODE_ENGINE_OWNED` 时，
+`scheduler.ordering.priority.preemption.allowedVictimStages` 包含 `DECODE_ENGINE_OWNED` 时，
 使用主动 Cancel RPC，并根据引擎回复和状态上报确认清理。
 不提供取消交付模式配置；旧的 `engineCancellation.mode` 配置应删除，否则配置解析失败。
-抢占整体超时由 `scheduler.ordering.preemption.timeoutMs` 控制。该配置随请求快照绑定，
+抢占整体超时由 `scheduler.ordering.priority.preemption.timeoutMs` 控制。该配置随请求快照绑定，
 外部配置来源与其他调度字段一致。
 
 ### Nacos 连接
@@ -151,11 +150,11 @@ Java 还可能等待接近 30 秒才发现新内容。因此两段等待叠加�
 读取异常均导致启动失败。配置缺失或空白的错误包含 DataId、group 和 namespace；读取异常保留原始原因。
 启动过程不回退其他 DataId、环境变量配置或默认配置。
 
-UniConfig / Nacos 的 v3 部分更新示例：
+UniConfig / Nacos 的 v5 部分更新示例：
 
 ```json
 {
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "router": {
     "availabilityHysteresisPercent": 12
   },
@@ -170,17 +169,24 @@ UniConfig / Nacos 的 v3 部分更新示例：
 
 ## FLEXLB_CONFIG 结构
 
-公共 schema 当前为 version 4，按责任分区：
+公共 schema 当前为 version 5，按责任分区。v4、旧队列超时和计算量上限必须显式迁移，不能自动换算成请求数：
 
-- `scheduler`：`DIRECT` / `QUEUE`；QUEUE 拥有 ordering、capacity 和 lifecycle。
-- router：角色容量、Decode costEstimator、cacheAffinity 和 groupSelector。
-  Prefill 的 maxComputeTokens 限制每台机器的工作量；cacheAffinity.maxComputeTokens
-  限制 cache-first 候选工作量；Encoder 使用 maxRequests。
-  `router.roles.prefill.costExpression` 默认 `"computeTokens"`，可配置为
-  `"100 + 0.5 * computeTokens"` 等标量算术公式。排序变量 `computeTokens` 是机器当前
-  工作量加上新请求的 `max(0, 输入 token 数 - 可复用缓存 token 数)`；得分越小越优先。
-  公式不改变实际 token 容量检查，cache-first 仍在容量内优先选择缓存命中更多的机器。
-  不支持 batch 聚合变量、`sum(...)` 或时间学习；公式结果必须有限且非负。
+- `requestLifecycle`：dispatchTimeoutMs=60000、inactivityTimeoutMs=60000、
+  engineVisibilityMultiplier=2.0；DIRECT/QUEUE 共用，VISIBILITY 只诊断。
+- `scheduler`：DIRECT 没有队列，不接受 ordering、扫描间隔等 QUEUE 字段。
+  QUEUE 的 ordering.priority.enabled 独立于 ordering.policy.type（FIFO / PREFILL_COST）；
+  抢占配置位于 priority.preemption，仅启用优先级时允许。
+- `router.roles.prefill`：remoteDiscount=0.2 为共同缓存折扣。
+  selection.type=COST_BASED 保留普通 cacheAffinity 与 costExpression（默认 computeTokens）；
+  selection.type=TOKEN_BALANCE 接受 minPrefixHitPercent=5，使用严格热缓存候选组。
+  admission.maxInflightRequests=128 两种策略通用，统计本地与 Engine 未覆盖请求。
+  admission.engineQueue 仅 TOKEN_BALANCE 使用，省略时默认 waitingThreshold=10；
+  超水位立即阻止准入，不配置没有实际消费方的持续拥塞计时。
+  没有计算量硬上限或缓存亲和计算量上限；Encoder 仍使用 maxRequests。
+- `router.roles.decode.costEstimator.expression` 默认 running_size，对齐目标 commit；
+  显式 kvcache_used_ratio 保留 KV 使用率排序。组选择、可用性和 KV 约束保持独立。
+  COST_BASED 的计算量评分不是时间，不能用于可见性期限。可见性采用单请求毫秒估计，
+  未知工作量不生成预测期限，详情见调度文档。
 - `workerRegistry`：worker health 与 cache-status 刷新策略。
 - `observability.cacheHit`：recent-key window、指标和理论命中日志。理论命中查询、历史池更新、
   指标与请求日志由独立单线程按入队顺序处理；请求线程仅提交任务。

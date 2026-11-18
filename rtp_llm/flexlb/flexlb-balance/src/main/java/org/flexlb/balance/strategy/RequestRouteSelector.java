@@ -30,7 +30,7 @@ import java.util.Objects;
  */
 @Component
 public class RequestRouteSelector {
-    private final CostBasedPrefillStrategy prefillStrategy;
+    private final PrefillSelectionStrategy prefillStrategy;
     private final DecodeStrategy decodeStrategy;
     private final VitStrategy vitStrategy;
     private final EncoderStrategy encoderStrategy;
@@ -40,7 +40,7 @@ public class RequestRouteSelector {
     @Autowired
     public RequestRouteSelector(
             EndpointRegistry endpoints,
-            CostBasedPrefillStrategy prefillStrategy,
+            PrefillSelectionStrategy prefillStrategy,
             DecodeStrategy decodeStrategy,
             VitStrategy vitStrategy,
             EncoderStrategy encoderStrategy,
@@ -237,6 +237,13 @@ public class RequestRouteSelector {
         }
         return requiredRoles.contains(RoleType.VIT)
                 && vitStrategy.validateSelection(context, resolvePolicyGroup(context)) != null;
+    }
+
+    public java.util.OptionalLong estimateQueuedTokens(RequestContext request, String group) {
+        if (request.getPhase() != org.flexlb.balance.schedule.RequestPhase.GENERATION)
+            return java.util.OptionalLong.empty();
+        var role = requiredRoles.contains(RoleType.PREFILL) ? RoleType.PREFILL : RoleType.PDFUSION;
+        return prefillStrategy.estimateQueuedTokens(request.getRequest(), role, group);
     }
 
     public WorkerEndpoint blockedEndpoint(CapacityKey key) {

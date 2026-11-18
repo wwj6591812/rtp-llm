@@ -8,7 +8,7 @@ import org.flexlb.worker.endpoint.WorkerEndpoint;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.function.Function;
+import java.util.function.BiFunction;
 
 import static com.google.common.base.Preconditions.checkArgument;
 
@@ -23,7 +23,24 @@ public abstract class AbstractWorkerSelectionStrategy<I, C> {
             org.flexlb.balance.schedule.RequestContext context,
             CapacityKey scope,
             List<I> initial,
-            Function<List<I>, SelectionResult<C, CapacityKey>> choose) {
+            java.util.function.Function<List<I>, SelectionResult<C, CapacityKey>> choose) {
+        return selectCandidates(
+                context,
+                scope,
+                initial,
+                (available, ranking) ->
+                        available.isEmpty() ? SelectionResult.retry() : choose.apply(available));
+    }
+
+    /**
+     * The chooser tries workers from the first list. The ranking list also includes workers
+     * that refused registration for lack of capacity, so a blocked choice can identify whom to wait for.
+     */
+    protected final SelectionResult<RoleSelection, CapacityKey> selectCandidates(
+            org.flexlb.balance.schedule.RequestContext context,
+            CapacityKey scope,
+            List<I> initial,
+            BiFunction<List<I>, List<I>, SelectionResult<C, CapacityKey>> choose) {
         if (initial.isEmpty())
             return SelectionResult.blocked(
                     scope,
@@ -31,16 +48,26 @@ public abstract class AbstractWorkerSelectionStrategy<I, C> {
                             org.flexlb.worker.endpoint.StrategyErrorType.forRole(scope.role())),
                     null);
         List<I> candidates = initial;
+        // Full workers can still determine the strategy's ranking. Unavailable workers cannot.
+        List<I> rankingCandidates = initial;
         int conflicts = 0;
         SelectionResult<RoleSelection, CapacityKey> lastFull = null;
         while (true) {
-            if (candidates.isEmpty() && candidates != initial)
-                return lastFull == null ? SelectionResult.retry() : lastFull;
-            var choice = choose.apply(Collections.unmodifiableList(candidates));
+            if (candidates.isEmpty() && lastFull == null) return SelectionResult.retry();
+            var current = Collections.unmodifiableList(candidates);
+            var choice =
+                    choose.apply(
+                            current,
+                            candidates == rankingCandidates
+                                    ? current
+                                    : Collections.unmodifiableList(rankingCandidates));
             // A full candidate can fit after capacity is released, even if the remaining ones
             // cannot.
-            if (choice.status() == SelectionResult.Status.REJECTED && lastFull != null)
-                return lastFull;
+            if (lastFull != null
+                    && (candidates.isEmpty() || choice.status() == SelectionResult.Status.REJECTED))
+                return choice.candidateGenerations().isEmpty()
+                        ? lastFull
+                        : lastFull.withCandidates(choice.candidateGenerations());
             if (choice.status() != SelectionResult.Status.SUCCESS) return choice.asFailure();
             C selected = choice.value();
             I original = candidate(selected);
@@ -68,7 +95,12 @@ public abstract class AbstractWorkerSelectionStrategy<I, C> {
                     if (refreshed == null) candidates.remove(index);
                     else candidates.set(index, refreshed);
                 }
-                case CAPACITY_FULL, UNAVAILABLE -> candidates.remove(index);
+                case CAPACITY_FULL -> candidates.remove(index);
+                case UNAVAILABLE -> {
+                    candidates.remove(index);
+                    if (rankingCandidates == initial) rankingCandidates = new ArrayList<>(initial);
+                    rankingCandidates.removeIf(entry -> entry == original);
+                }
                 case REGISTERED ->
                         throw new IllegalStateException("registered selection already returned");
             }

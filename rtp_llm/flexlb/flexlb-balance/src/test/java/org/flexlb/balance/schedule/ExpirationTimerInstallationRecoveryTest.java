@@ -251,6 +251,13 @@ class ExpirationTimerInstallationRecoveryTest {
             ReflectionTestUtils.setField(context, "prefillCompletedAtMs", 1001L);
             ReflectionTestUtils.setField(context, "visibilityAtMs", 3000L);
             ReflectionTestUtils.invokeMethod(context, "refreshState", 1002L);
+            // Exercise the timer mechanism with all three independent kinds, regardless of request
+            // phase.
+            ReflectionTestUtils.setField(
+                    context,
+                    "deadlines",
+                    new ExpirationTimer.Plan(0, null, null, null)
+                            .schedule(context, 100_000L, 3000L, 11_000L));
             var repository = mock(RequestRepository.class);
             when(repository.isCurrent(context)).thenReturn(true);
             timer =

@@ -93,8 +93,8 @@ class CacheHitFeedbackFlowTest {
         config = new FlexlbConfig();
 
         var affinity = new RoutingConfig.CacheAffinityConfig();
-        affinity.setRemoteDiscount(0.5);
-        config.getRouter().getRoles().getPrefill().setCacheAffinity(affinity);
+        config.getRouter().getRoles().getPrefill().setRemoteDiscount(0.5);
+        config.getRouter().getRoles().getPrefill().getSelection().setCacheAffinity(affinity);
         ConfigService configs = mock(ConfigService.class);
         when(configs.loadBalanceConfig()).thenReturn(config);
         registry = RunnerTestSupport.endpointRegistry(configs);

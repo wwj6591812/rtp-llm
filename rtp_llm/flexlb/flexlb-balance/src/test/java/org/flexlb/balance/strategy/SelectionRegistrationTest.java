@@ -34,8 +34,8 @@ class SelectionRegistrationTest {
     private final ConfigService config =
             new ConfigService(
                     """
-            {"requestLifecycle":{"request":{"timeoutMs":60000}},"router":{"roles":{
-              "prefill":{"maxComputeTokens":10000},
+            {"requestLifecycle":{"inactivityTimeoutMs": 60000},"router":{"roles":{
+              "prefill":{"admission":{"maxInflightRequests":128}},
               "decode":{"availability":{"maxEngineRequests":10,"maxKvUsagePercent":100}}}}}
             """);
 

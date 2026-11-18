@@ -4,27 +4,42 @@ import lombok.Getter;
 import lombok.Setter;
 
 /**
- * Queue ordering mode and optional priority/preemption settings.
+ * Composes business-priority arbitration with a separate request ordering policy.
  */
 @Getter
 @Setter
 public final class QueueOrderingConfig {
-    private Type type = Type.FIFO;
+    private Priority priority = new Priority();
+    private Policy policy = new Policy();
 
-    private int defaultPriority = 50;
+    public enum PolicyType {
+        FIFO,
+        PREFILL_COST
+    }
 
-    private PreemptionConfig preemption;
+    /**
+     * Enables priority arbitration and its default preemption settings independently of request order.
+     */
+    @Getter
+    @Setter
+    public static final class Priority {
+        private boolean enabled;
+        private int defaultPriority = 50;
+        private PreemptionConfig preemption;
 
-    @com.fasterxml.jackson.annotation.JsonSetter("type")
-    public void setType(Type type) {
-        this.type = type;
-        if (type == Type.PRIORITY && preemption == null) {
-            preemption = new PreemptionConfig();
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+            if (enabled && preemption == null) preemption = new PreemptionConfig();
+            if (!enabled) preemption = null;
         }
     }
 
-    public enum Type {
-        FIFO,
-        PRIORITY
+    /**
+     * Selects FIFO or cached Prefill-cost ordering within each priority level.
+     */
+    @Getter
+    @Setter
+    public static final class Policy {
+        private PolicyType type = PolicyType.FIFO;
     }
 }

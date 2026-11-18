@@ -4,6 +4,7 @@ import org.flexlb.balance.request.Response;
 
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 import static com.google.common.base.Preconditions.checkArgument;
 
@@ -12,10 +13,21 @@ import static com.google.common.base.Preconditions.checkArgument;
  * Successful values describe the selected role or request route; this result does not track request completion.
  */
 public record SelectionResult<V, B>(
-        Status status, V value, Response failure, B blocker, Map<String, Object> diagnostics) {
+        Status status,
+        V value,
+        Response failure,
+        B blocker,
+        Map<String, Object> diagnostics,
+        Set<Long> candidateGenerations) {
+    public SelectionResult(
+            Status status, V value, Response failure, B blocker, Map<String, Object> diagnostics) {
+        this(status, value, failure, blocker, diagnostics, Set.of());
+    }
+
     public SelectionResult {
         Objects.requireNonNull(status, "status");
         diagnostics = diagnostics == null ? null : Map.copyOf(diagnostics);
+        candidateGenerations = Set.copyOf(candidateGenerations);
         boolean success = status == Status.SUCCESS;
         boolean rejected = status == Status.REJECTED;
         boolean blocked = status == Status.BLOCKED;
@@ -28,6 +40,17 @@ public record SelectionResult<V, B>(
         checkArgument(
                 failure == null || !failure.isSuccess(),
                 "selection failure requires a failure response");
+        checkArgument(
+                blocked || candidateGenerations.isEmpty(),
+                "candidate hints require a blocked selection");
+    }
+
+    /**
+     * Retains the candidates considered by this blocked selection; later calls select again.
+     */
+    public SelectionResult<V, B> withCandidates(Set<Long> generations) {
+        checkArgument(status == Status.BLOCKED, "candidate hints require a blocked selection");
+        return new SelectionResult<>(status, value, failure, blocker, diagnostics, generations);
     }
 
     public static <V, B> SelectionResult<V, B> success(V value) {

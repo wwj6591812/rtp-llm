@@ -133,7 +133,8 @@ class RequestPublicationFailureOwnershipTest {
                 org.junit.jupiter.api.Assertions.assertNull(context.snapshot().responseForFuture());
                 org.junit.jupiter.api.Assertions.assertNull(
                         context.snapshot().requestRecordForArchive());
-                assertNotNull(context.snapshot().deadlines().inactivity());
+                org.junit.jupiter.api.Assertions.assertNull(
+                        context.snapshot().deadlines().inactivity());
                 accepting.set(true);
                 f.owner.processPendingRequestActions(context);
                 assertFalse(future.get(3, TimeUnit.SECONDS).isSuccess());
@@ -166,6 +167,7 @@ class RequestPublicationFailureOwnershipTest {
             var prefillRegistration = route.prefillRegistration();
             RequestProtocolTestSupport.bind(
                     f.owner, new RequestProtocolTestSupport.Registered(route, future));
+            context.recordRemoteCleanup(route, true, System.currentTimeMillis());
             var notificationEntered = new CountDownLatch(1);
             var finishNotification = new CountDownLatch(1);
             var released = new CountDownLatch(1);
@@ -360,6 +362,12 @@ class RequestPublicationFailureOwnershipTest {
                 f.runtime.tasks.awaitIdle();
                 RequestProtocolTestSupport.awaitCondition(() -> registrations(f.runtime) == 0);
                 assertEquals(EndCause.WORKER_REPORT_TIMEOUT, context.snapshot().endCause());
+                assertEquals(Phase.ENDING, context.snapshot().phase());
+                verify(endpoint, never()).releaseRequest(prefillRegistration);
+                ReflectionTestUtils.setField(f.runtime.tasks, "requestWorkers", workers);
+                f.owner.onEngineCancelReply(
+                        route, org.flexlb.worker.rpc.EngineGrpcClient.CancelReply.REQUEST_CLEANED);
+                f.runtime.tasks.awaitIdle();
                 assertEquals(Phase.CLOSED, context.snapshot().phase());
                 assertEquals(0, f.runtime.requests().liveRequestCount());
                 verify(endpoint, times(1)).releaseRequest(prefillRegistration);

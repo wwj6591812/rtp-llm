@@ -286,7 +286,7 @@ class RequestRouteSelectorTest {
                         new WorkerEndpoint.Registration<PrefillEndpoint.RequestRegistration>(
                                 WorkerEndpoint.RegistrationStatus.CAPACITY_FULL, null))
                 .when((PrefillEndpoint) prefill.endpoint)
-                .tryRegisterSelection(any(), any(), anyLong());
+                .tryRegisterSelection(any(), any(), anyLong(), anyLong());
 
         assertEquals(
                 StrategyErrorType.RESOURCE_EXHAUSTED.getErrorCode(),
@@ -378,13 +378,17 @@ class RequestRouteSelectorTest {
                     requests,
                     requestContext,
                     System.currentTimeMillis()
-                            + context.getConfig()
-                                    .getRequestLifecycle()
-                                    .getRequest()
-                                    .getTimeoutMs());
+                            + context.getConfig().getRequestLifecycle().getInactivityTimeoutMs());
+
             assertEquals(
                     RequestState.State.TIMED_OUT,
                     SchedulerTestSupport.repository(requests).getRequestState("9").state());
+            assertEquals(1, SchedulerTestSupport.repository(requests).liveRequestCount());
+            verify((DecodeEndpoint) decode.endpoint, never()).releaseRequest(reservation);
+            requests.onEngineCancelReply(
+                    requestContext.snapshot().committedRoute(),
+                    org.flexlb.worker.rpc.EngineGrpcClient.CancelReply.REQUEST_CLEANED);
+            SchedulerTestSupport.awaitRequestWork(SchedulerTestSupport.runtime(requests));
             assertEquals(0, SchedulerTestSupport.repository(requests).liveRequestCount());
             verify((DecodeEndpoint) decode.endpoint).releaseRequest(reservation);
             verify((PrefillEndpoint) prefill.endpoint)
@@ -1204,7 +1208,7 @@ class RequestRouteSelectorTest {
         assertEquals(SelectionResult.Status.BLOCKED, result.status());
         assertEquals(new CapacityKey(RoleType.PREFILL, null, null), result.blocker());
         verify((PrefillEndpoint) prefill.endpoint(), never())
-                .tryRegisterSelection(any(), any(), anyLong());
+                .tryRegisterSelection(any(), any(), anyLong(), anyLong());
         verifyNoInteractions(ReflectionTestUtils.getField(prefillStrategy, "cacheReporter"));
     }
 
@@ -1215,7 +1219,7 @@ class RequestRouteSelectorTest {
         var prefill = selection(RoleType.PREFILL, 63L, "p", 8001, "g1");
         var snapshot =
                 new PrefillEndpoint.SelectionSnapshot(
-                        prefill.endpoint().getStatus().getGenerationId(), 0, 0, 1000);
+                        prefill.endpoint().getStatus().getGenerationId(), 0, 0, 0L, 128, false);
         when(((PrefillEndpoint) prefill.endpoint()).selectionSnapshot()).thenReturn(snapshot);
         prefillStrategy =
                 new CostBasedPrefillStrategy(
@@ -1412,7 +1416,11 @@ class RequestRouteSelectorTest {
             var ledger = prefill;
 
             org.flexlb.worker.endpoint.EndpointTestSupport.stubResources(prefill, ledger);
-            when(prefill.tryRegisterSelection(any(), any(), org.mockito.ArgumentMatchers.anyLong()))
+            when(prefill.tryRegisterSelection(
+                            any(),
+                            any(),
+                            org.mockito.ArgumentMatchers.anyLong(),
+                            org.mockito.ArgumentMatchers.anyLong()))
                     .thenAnswer(
                             call -> {
                                 if (!prefill.acceptsNewRequests())

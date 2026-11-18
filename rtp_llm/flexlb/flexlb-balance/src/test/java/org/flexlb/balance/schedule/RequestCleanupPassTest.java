@@ -133,7 +133,7 @@ class RequestCleanupPassTest {
                 null);
         context.recordCleanupProgress(null, true, true, true, 1002L);
         assertEquals(Phase.ENDING, context.snapshot().phase());
-        assertNotNull(context.snapshot().deadlines().inactivity());
+        org.junit.jupiter.api.Assertions.assertNull(context.snapshot().deadlines().inactivity());
 
         var response =
                 SchedulerTestSupport.responseCandidate(

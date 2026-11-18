@@ -86,10 +86,13 @@ Snapshot 在读取时生成，仅是不可变视图；请求不维护另一份�
 ## Prefill / PDFusion 策略
 
 PrefillTimePredictor.computeTokens 统计输入 tokens 减去可复用缓存 tokens。
-CostBasedPrefillStrategy 按节点当前工作量加本请求 compute tokens 选择节点，
-并跳过超过 router.roles.prefill.maxComputeTokens 的候选。
-cacheAffinity 启用时优先选择命中更多且工作量不超过 cacheAffinity.maxComputeTokens 的节点；
-该上限省略时使用普通 Prefill 上限。无合适缓存候选时仍按工作量选择满足上限的节点。
+PrefillSelectionStrategy 抽象基类负责缓存估计、原子登记和重试，具体选点只有两个实现：
+CostBasedPrefillStrategy 按当前工作量加本请求 compute tokens 评分，普通 cacheAffinity 优先缓存命中，
+满载时允许退到其他可接纳节点。TokenBalancedPrefillStrategy 的热请求（有效命中比例严格大于阈值）
+在容量筛选前固定最高命中候选集合；该集合全部满载则等待，不降级到低命中节点。
+冷请求比较已有工作量加完整输入长度，不利用低于阈值的缓存亲和。
+两者都检查 admission.maxInflightRequests；只有 TOKEN_BALANCE 启用 Engine 等待水位准入。
+compute tokens 是排序依据，不再是可配置容量上限。
 
 缓存匹配来自 CacheAwareService；本地命中按全量折算，远端增量按 remoteDiscount 折算。
 登记失败会尝试其他候选，版本冲突会重新读取快照。全部候选容量不足时由全局队列等待唤醒。

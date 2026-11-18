@@ -81,7 +81,11 @@ class DirectRequestLifetimeRaceTest {
             var reservation = mock(PrefillEndpoint.RequestRegistration.class);
             when(reservation.requestId()).thenReturn(context.getRequestId());
             when(prefill.acceptsNewRequests()).thenReturn(true);
-            when(prefill.tryRegisterSelection(any(), any(), org.mockito.ArgumentMatchers.anyLong()))
+            when(prefill.tryRegisterSelection(
+                            any(),
+                            any(),
+                            org.mockito.ArgumentMatchers.anyLong(),
+                            org.mockito.ArgumentMatchers.anyLong()))
                     .thenReturn(
                             new WorkerEndpoint.Registration<PrefillEndpoint.RequestRegistration>(
                                     WorkerEndpoint.RegistrationStatus.REGISTERED, reservation));

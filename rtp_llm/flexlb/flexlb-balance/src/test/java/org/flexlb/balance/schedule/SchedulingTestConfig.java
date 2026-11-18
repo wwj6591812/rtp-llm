@@ -135,11 +135,7 @@ public final class SchedulingTestConfig {
         return config;
     }
 
-    public static void configureRequiredValues(FlexlbConfig config) {
-        if (config.getRequestLifecycle().getRequest().getTimeoutMs() == null) {
-            config.getRequestLifecycle().getRequest().setTimeoutMs(60_000L);
-        }
-    }
+    public static void configureRequiredValues(FlexlbConfig config) {}
 
     public static SchedulerConfig useFifoQueue(FlexlbConfig config) {
         SchedulerConfig queue = activeQueueOrNew(config);
@@ -165,7 +161,7 @@ public final class SchedulingTestConfig {
 
     public static PreemptionConfig preemption(FlexlbConfig config) {
         usePriorityQueue(config);
-        QueueOrderingConfig priority = config.priorityOrdering();
+        QueueOrderingConfig.Priority priority = config.priorityOrdering().getPriority();
         if (priority.getPreemption() == null) {
             priority.setPreemption(new PreemptionConfig());
         }
@@ -175,7 +171,7 @@ public final class SchedulingTestConfig {
     public static SchedulerConfig usePriorityQueue(FlexlbConfig config) {
         SchedulerConfig queue = activeQueueOrNew(config);
         QueueOrderingConfig priority =
-                queue.getOrdering().getType() == QueueOrderingConfig.Type.PRIORITY
+                queue.getOrdering().getPriority().isEnabled()
                         ? queue.getOrdering()
                         : ConfigTestSupport.priority();
         queue.setOrdering(priority);

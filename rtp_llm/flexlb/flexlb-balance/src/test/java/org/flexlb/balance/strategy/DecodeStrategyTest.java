@@ -642,7 +642,7 @@ class DecodeStrategyTest {
     }
 
     @Test
-    void defaultCostUsesKvUsageRatioAcrossDifferentWorkerCapacities() {
+    void explicitKvUsageRatioWorksAcrossDifferentWorkerCapacities() {
         var estimator =
                 configService
                         .loadBalanceConfig()
@@ -650,7 +650,8 @@ class DecodeStrategyTest {
                         .getRoles()
                         .getDecode()
                         .getCostEstimator();
-        Assertions.assertEquals("kvcache_used_ratio", estimator.getExpression());
+        Assertions.assertEquals("running_size", estimator.getExpression());
+        estimator.setExpression("kvcache_used_ratio");
         registerWorker("127.0.0.1", 1_000L, 500L);
         registerWorker("127.0.0.2", 10_000L, 9_000L);
 
@@ -681,6 +682,13 @@ class DecodeStrategyTest {
 
     @Test
     void cacheCostKeepsUsageRatiosAboveOneDistinctForBusyWorkers() {
+        configService
+                .loadBalanceConfig()
+                .getRouter()
+                .getRoles()
+                .getDecode()
+                .getCostEstimator()
+                .setExpression("kvcache_used_ratio");
         registerWorker("127.0.0.1", 3_000L, 3_000L);
         registerWorker("127.0.0.2", 3_000L, 3_000L);
         EndpointRegistry registry = decodeRegistry();
@@ -1168,6 +1176,13 @@ class DecodeStrategyTest {
 
     @Test
     void cacheCostKeepsZeroKvReservationsTiedAcrossWorkers() {
+        configService
+                .loadBalanceConfig()
+                .getRouter()
+                .getRoles()
+                .getDecode()
+                .getCostEstimator()
+                .setExpression("kvcache_used_ratio");
         registerWorker("127.0.0.1", 1_000, 1_000);
         registerWorker("127.0.0.2", 1_000, 1_000);
         EndpointRegistry registry = decodeRegistry();
@@ -1311,10 +1326,10 @@ class DecodeStrategyTest {
                         ? new QueueOrderingConfig()
                         : ConfigTestSupport.priority();
         if (policy == QueuePolicy.PRIORITY) {
-            ordering.setPreemption(null);
+            ordering.getPriority().setPreemption(null);
         }
         if (policy == QueuePolicy.PREEMPTIVE) {
-            ordering.setPreemption(preemption());
+            ordering.getPriority().setPreemption(preemption());
         }
         configService.loadBalanceConfig().queueScheduler().setOrdering(ordering);
     }

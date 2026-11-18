@@ -322,7 +322,7 @@ class RequestTerminalSettlementTest {
 
     private static Fixture fixture(boolean finishAdmission, boolean queueScheduling) {
         var config = SchedulingTestConfig.newConfig();
-        config.getRequestLifecycle().getRequest().setTimeoutMs(60_000L);
+        config.getRequestLifecycle().setInactivityTimeoutMs(60_000L);
         RequestContext context =
                 RequestProtocolTestSupport.context(config, Long.parseLong(RESERVATION.requestId()));
         var publisher = mock(ResponseCompletionExecutor.class);

@@ -14,7 +14,6 @@ import org.flexlb.api.protocol.FlexlbServiceGrpc;
 import org.flexlb.balance.metrics.DeliveryMetricsReporter;
 import org.flexlb.balance.metrics.RequestSchedulerReporter;
 import org.flexlb.balance.schedule.RequestContext;
-import org.flexlb.balance.strategy.CostBasedPrefillStrategy;
 import org.flexlb.balance.strategy.DecodeStrategy;
 import org.flexlb.balance.strategy.EncoderStrategy;
 import org.flexlb.balance.strategy.RequestRouteSelector;
@@ -97,19 +96,19 @@ abstract class AbstractRoutePerformanceTest extends FlexLBMockTestBase {
     protected FlexlbConfig createConfig() {
         FlexlbConfig cfg =
                 new ConfigService(
-                                "{\"requestLifecycle\":{\"request\":{\"timeoutMs\":60000}},\"scheduler\":{\"type\":\""
+                                "{\"requestLifecycle\":{\"inactivityTimeoutMs\": 60000},\"scheduler\":{\"type\":\""
                                         + mode()
                                         + "\"}}")
                         .loadBalanceConfig();
-        cfg.getRequestLifecycle().getRequest().setTimeoutMs(60000L);
+        cfg.getRequestLifecycle().setInactivityTimeoutMs(60000L);
         cfg.getGrpcServer().setExecutorCoreSize(16);
         cfg.getGrpcServer().setExecutorMaxSize(32);
         cfg.getGrpcServer().setExecutorQueueSize(65536);
         cfg.getGrpcServer().setMaxReceivingRequests(8192);
         if (scenario() != Scenario.AVAILABLE) {
-            cfg.getScheduler().setQueueTimeoutMs(250L);
+            cfg.getRequestLifecycle().setDispatchTimeoutMs(250L);
             if (scenario() == Scenario.PREFILL_LIMITED) {
-                cfg.getRouter().getRoles().getPrefill().setMaxComputeTokens(1024L);
+                cfg.getRouter().getRoles().getPrefill().getAdmission().setMaxInflightRequests(1);
             } else {
                 cfg.getRouter().getRoles().getDecode().getAvailability().setMaxEngineRequests(1L);
             }
@@ -149,7 +148,7 @@ abstract class AbstractRoutePerformanceTest extends FlexLBMockTestBase {
                     @Override
                     public CacheMatchResult findMatchingEngines(
                             org.flexlb.cache.CacheMatchQuery query) {
-                        return CacheMatchResult.empty(CacheMatchSource.LOCAL_SYNC);
+                        return cacheMatches(query);
                     }
 
                     @Override
@@ -163,7 +162,8 @@ abstract class AbstractRoutePerformanceTest extends FlexLBMockTestBase {
                 };
         return new RequestRouteSelector(
                 endpointRegistry,
-                new CostBasedPrefillStrategy(configService, endpointRegistry, cache, cacheMetrics),
+                new org.flexlb.balance.schedule.SchedulerConfiguration()
+                        .prefillStrategy(configService, endpointRegistry, cache, cacheMetrics),
                 new DecodeStrategy(
                         configService,
                         new org.flexlb.balance.schedule.SchedulerConfiguration()
@@ -173,6 +173,16 @@ abstract class AbstractRoutePerformanceTest extends FlexLBMockTestBase {
                 new EncoderStrategy(configService, endpointRegistry),
                 meta);
     }
+
+    protected CacheMatchResult cacheMatches(org.flexlb.cache.CacheMatchQuery query) {
+        return CacheMatchResult.empty(CacheMatchSource.LOCAL_SYNC);
+    }
+
+    protected int requestPriority(long requestId) {
+        return 0;
+    }
+
+    protected void prepareTraffic(int qps) {}
 
     @BeforeAll
     static void quietLogs() {
@@ -299,16 +309,24 @@ abstract class AbstractRoutePerformanceTest extends FlexLBMockTestBase {
         usedPrefill.clear();
         usedDecode.clear();
         peakActiveRoutes.set(0);
-        traffic(qps, 10, true);
-        awaitWorkerCompletions();
-        if (scenario() != Scenario.AVAILABLE) {
-            assertEquals(0, traffic(64, 1, false), "capacity must recover after overload");
-            awaitWorkerCompletions();
-        }
-        awaitEmptyResourceLedgers();
+        assertAll(
+                () -> traffic(qps, 10, true),
+                () -> {
+                    awaitWorkerCompletions();
+                    if (scenario() != Scenario.AVAILABLE) {
+                        assertEquals(
+                                0, traffic(64, 1, false), "capacity must recover after overload");
+                        awaitWorkerCompletions();
+                    }
+                    awaitEmptyResourceLedgers();
+                    System.out.printf(
+                            "E2E_RECOVERY mode=%s scenario=%s qps=%d ledgers_empty=true%n",
+                            mode(), scenario(), qps);
+                });
     }
 
     private int traffic(int qps, int seconds, boolean measured) throws Exception {
+        prepareTraffic(qps);
         int count = qps * seconds;
         long[] rt = new long[count], lag = new long[count], plannedRt = new long[count];
         CountDownLatch done = new CountDownLatch(count);
@@ -349,6 +367,7 @@ abstract class AbstractRoutePerformanceTest extends FlexLBMockTestBase {
                                 .setMaxNewTokens(8)
                                 .setNumBeams(1)
                                 .setModel("mock-model")
+                                .setPriority(requestPriority(id))
                                 .setRequestTimeMs(System.currentTimeMillis())
                                 .setGenerateTimeout(60000L)
                                 .build();
@@ -416,12 +435,23 @@ abstract class AbstractRoutePerformanceTest extends FlexLBMockTestBase {
                 result.put("end_epoch_ms", System.currentTimeMillis());
                 result.put("mode", mode());
                 result.put("scenario", scenario().name());
+                result.put(
+                        "prefill_selection",
+                        config.getRouter().getRoles().getPrefill().getSelection().getType().name());
+                result.put(
+                        "request_order",
+                        config.getScheduler().getOrdering().getPolicy().getType().name());
+                result.put("priority_enabled", config.isPriorityOrdering());
                 result.put("rejections", rejected.get());
                 result.put("rejection_codes", rejectionCodes);
                 result.put("completion_delay_ms", completionDelayMs());
                 result.put(
-                        "prefill_max_compute_tokens",
-                        config.getRouter().getRoles().getPrefill().getMaxComputeTokens());
+                        "prefill_max_inflight_requests",
+                        config.getRouter()
+                                .getRoles()
+                                .getPrefill()
+                                .getAdmission()
+                                .getMaxInflightRequests());
                 result.put(
                         "decode_max_requests",
                         config.getRouter()
@@ -524,37 +554,44 @@ abstract class AbstractRoutePerformanceTest extends FlexLBMockTestBase {
                                         ((Number) recorder.snapshot().get("completion_count"))
                                                 .intValue(),
                                         "server completion coverage"),
-                        () -> resourceSampler.check(limits));
-                if (scenario() != Scenario.AVAILABLE) {
-                    assertAll(
-                            () ->
-                                    assertTrue(
-                                            rejected.get()
-                                                    >= count
-                                                            * limits.path("minRejectionRatio")
-                                                                    .asDouble(),
-                                            "fixture did not create sustained capacity shortage"),
-                            () ->
-                                    assertTrue(
-                                            (double) result.get("successful_qps")
-                                                    >= limits.path("minSuccessQps").asDouble(),
-                                            "successful QPS expected >= "
-                                                    + limits.path("minSuccessQps").asDouble()
-                                                    + ", actual "
-                                                    + result.get("successful_qps")),
-                            () ->
-                                    assertTrue(
-                                            (double) result.get("successful_qps")
-                                                    <= limits.path("maxSuccessQps").asDouble(),
-                                            "successful QPS expected <= "
-                                                    + limits.path("maxSuccessQps").asDouble()
-                                                    + ", actual "
-                                                    + result.get("successful_qps")),
-                            () ->
-                                    assertTrue(
-                                            peakActiveRoutes.get() >= 675,
-                                            "overload must fill the finite 750-slot role"));
-                }
+                        () -> resourceSampler.check(limits),
+                        () -> {
+                            if (scenario() != Scenario.AVAILABLE) {
+                                assertAll(
+                                        () ->
+                                                assertTrue(
+                                                        rejected.get()
+                                                                >= count
+                                                                        * limits.path(
+                                                                                        "minRejectionRatio")
+                                                                                .asDouble(),
+                                                        "fixture did not create sustained capacity shortage"),
+                                        () ->
+                                                assertTrue(
+                                                        (double) result.get("successful_qps")
+                                                                >= limits.path("minSuccessQps")
+                                                                        .asDouble(),
+                                                        "successful QPS expected >= "
+                                                                + limits.path("minSuccessQps")
+                                                                        .asDouble()
+                                                                + ", actual "
+                                                                + result.get("successful_qps")),
+                                        () ->
+                                                assertTrue(
+                                                        (double) result.get("successful_qps")
+                                                                <= limits.path("maxSuccessQps")
+                                                                        .asDouble(),
+                                                        "successful QPS expected <= "
+                                                                + limits.path("maxSuccessQps")
+                                                                        .asDouble()
+                                                                + ", actual "
+                                                                + result.get("successful_qps")),
+                                        () ->
+                                                assertTrue(
+                                                        peakActiveRoutes.get() >= 675,
+                                                        "overload must fill the finite 750-slot role"));
+                            }
+                        });
             }
             assertEquals(0, failures.get(), firstError.get());
             return rejected.get();
@@ -588,7 +625,7 @@ abstract class AbstractRoutePerformanceTest extends FlexLBMockTestBase {
             assertNotNull(route);
             if (scenario() == Scenario.PREFILL_LIMITED) {
                 assertTrue(
-                        route.prefillEndpoint().selectionSnapshot().computeTokens() <= 1024,
+                        route.prefillEndpoint().selectionSnapshot().outstandingRequests() <= 1,
                         "Prefill capacity was exceeded");
             } else if (scenario() == Scenario.DECODE_LIMITED) {
                 assertTrue(
@@ -662,8 +699,16 @@ abstract class AbstractRoutePerformanceTest extends FlexLBMockTestBase {
     }
 
     private java.nio.file.Path resultPath(int qps) {
+        String policy = config.getRouter().getRoles().getPrefill().getSelection().getType().name();
+        String order = config.getScheduler().getOrdering().getPolicy().getType().name();
+        String suffix =
+                policy.equals("COST_BASED") && order.equals("FIFO")
+                        ? ""
+                        : "-" + policy + "-" + order;
         return java.nio.file.Path.of(
-                "target", "route-performance", mode() + "-" + scenario() + "-" + qps + ".json");
+                "target",
+                "route-performance",
+                mode() + "-" + scenario() + suffix + "-" + qps + ".json");
     }
 
     private void awaitEmptyResourceLedgers() {
@@ -767,16 +812,42 @@ abstract class AbstractRoutePerformanceTest extends FlexLBMockTestBase {
                 cpu.add(100.0 * (processCpu - lastCpu) / (now - lastTime));
                 lastTime = now;
                 lastCpu = processCpu;
-                String rss =
-                        java.nio.file.Files.readAllLines(java.nio.file.Path.of("/proc/self/status"))
-                                .stream()
-                                .filter(line -> line.startsWith("VmRSS:"))
-                                .findFirst()
-                                .orElseThrow();
-                rssPeakBytes = Math.max(rssPeakBytes, Long.parseLong(rss.split("\\s+")[1]) * 1024);
+                rssPeakBytes = Math.max(rssPeakBytes, residentBytes());
             } catch (Throwable error) {
                 failure = error;
             }
+        }
+
+        private long residentBytes() throws java.io.IOException, InterruptedException {
+            if (operatingSystem.getName().startsWith("Mac")) {
+                var process =
+                        new ProcessBuilder(
+                                        "/bin/ps",
+                                        "-o",
+                                        "rss=",
+                                        "-p",
+                                        Long.toString(ProcessHandle.current().pid()))
+                                .start();
+                try {
+                    if (!process.waitFor(1, TimeUnit.SECONDS) || process.exitValue() != 0)
+                        throw new java.io.IOException("ps RSS sampling failed");
+                    String rss =
+                            new String(
+                                            process.getInputStream().readAllBytes(),
+                                            java.nio.charset.StandardCharsets.UTF_8)
+                                    .trim();
+                    return Math.multiplyExact(Long.parseLong(rss), 1024L);
+                } finally {
+                    if (process.isAlive()) process.destroyForcibly();
+                }
+            }
+            String rss =
+                    java.nio.file.Files.readAllLines(java.nio.file.Path.of("/proc/self/status"))
+                            .stream()
+                            .filter(line -> line.startsWith("VmRSS:"))
+                            .findFirst()
+                            .orElseThrow();
+            return Math.multiplyExact(Long.parseLong(rss.split("\\s+")[1]), 1024L);
         }
     }
 }

@@ -12,13 +12,14 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableSet;
+import java.util.Set;
 import java.util.TreeSet;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 /**
  * Pauses requests by role/group and resumes ordered batches within shared worker capacity.
- * Notifications and periodic capacity checks permit fresh selection;
+ * Notifications use request-level hints and periodic capacity checks permit fresh selection;
  * failed retries and newly parked requests wait for the next finite pass.
  * The scheduler lock protects every operation; retry budgets do not reserve Engine resources.
  */
@@ -40,7 +41,8 @@ public final class CapacityWaitQueue {
         return waiter != null && waiter.budget == null;
     }
 
-    public void park(RequestContext request, CapacityKey blocker) {
+    public void park(RequestContext request, CapacityKey blocker, Set<Long> candidateGenerations) {
+        var candidates = Set.copyOf(candidateGenerations);
         var key = blocker.waitingDomain();
         var waiter = membership.get(request);
         if (waiter == null || !waiter.domain.key.equals(key)) {
@@ -51,6 +53,7 @@ public final class CapacityWaitQueue {
         var domain = waiter.domain;
         ready.remove(request);
         boolean changedDuringRetry = finishRetry(waiter, true);
+        waiter.candidateGenerations = candidates;
         domain.entries.remove(request);
         domain.deferred.add(request);
         if (changedDuringRetry) reopen(domain);
@@ -77,7 +80,7 @@ public final class CapacityWaitQueue {
         }
         budget.key = capacity.key();
         budget.revision = capacity.revision();
-        budget.refresh(capacity.availableRequests());
+        budget.refresh(capacity.availableRequests(), false);
         for (var domain : domains.values()) {
             if (!budget.matches(domain.key)) continue;
             domain.budgets.removeIf(candidate -> candidate.key.endpoint() == null);
@@ -99,10 +102,10 @@ public final class CapacityWaitQueue {
             if (capacity.revision() < budget.revision) continue;
             budget.key = capacity.key();
             budget.revision = capacity.revision();
-            budget.refresh(capacity.availableRequests());
+            budget.refresh(capacity.availableRequests(), true);
         }
         for (var entry : workerBudgets.entrySet())
-            if (!currentWorkers.contains(entry.getKey())) entry.getValue().refresh(0L);
+            if (!currentWorkers.contains(entry.getKey())) entry.getValue().refresh(0L, false);
         workerBudgets
                 .entrySet()
                 .removeIf(
@@ -110,7 +113,7 @@ public final class CapacityWaitQueue {
                                 !currentWorkers.contains(entry.getKey())
                                         && entry.getValue().inFlight == 0);
         controlChecks.entrySet().removeIf(entry -> entry.getValue().inFlight == 0);
-        for (var budget : controlChecks.values()) budget.refresh(1L);
+        for (var budget : controlChecks.values()) budget.refresh(1L, true);
         for (var domain : domains.values()) {
             domain.budgets.clear();
             for (var budget : workerBudgets.values())
@@ -121,7 +124,7 @@ public final class CapacityWaitQueue {
                                 domain.key,
                                 key -> {
                                     var budget = new Budget(key);
-                                    budget.refresh(1L);
+                                    budget.refresh(1L, true);
                                     return budget;
                                 }));
             }
@@ -140,13 +143,18 @@ public final class CapacityWaitQueue {
     public void resumeReady(
             int limit, Predicate<RequestContext> canRun, Consumer<RequestContext> resume) {
         var available = new HashMap<Domain, Budget>();
+        var periodic = new HashMap<Domain, Budget>();
         var iterator = ready.iterator();
         for (int count = 0; count < limit && iterator.hasNext(); ) {
             var request = iterator.next();
             if (!canRun.test(request)) continue;
             var waiter = membership.get(request);
             var domain = waiter.domain;
-            var budget = availableBudget(domain, available);
+            var budget = matchingBudget(waiter);
+            if (budget == null) {
+                boolean restricted = !waiter.candidateGenerations.isEmpty();
+                budget = availableBudget(domain, restricted ? periodic : available, restricted);
+            }
             if (budget == null) continue;
             iterator.remove();
             domain.entries.remove(request);
@@ -168,16 +176,27 @@ public final class CapacityWaitQueue {
         controlChecks.clear();
     }
 
-    private Budget availableBudget(Domain domain, Map<Domain, Budget> cache) {
+    private Budget availableBudget(Domain domain, Map<Domain, Budget> cache, boolean periodicOnly) {
         var cached = cache.get(domain);
         if (cache.containsKey(domain) && (cached == null || cached.remaining() > 0L)) return cached;
         for (var budget : domain.budgets) {
-            if (budget.matches(domain.key) && budget.remaining() > 0L) {
+            if ((!periodicOnly || budget.periodic)
+                    && budget.matches(domain.key)
+                    && budget.remaining() > 0L) {
                 cache.put(domain, budget);
                 return budget;
             }
         }
         cache.put(domain, null);
+        return null;
+    }
+
+    private Budget matchingBudget(Waiter waiter) {
+        var key = waiter.domain.key;
+        for (long generation : waiter.candidateGenerations) {
+            var budget = workerBudgets.get(new WorkerKey(key.role(), generation));
+            if (budget != null && budget.matches(key) && budget.remaining() > 0L) return budget;
+        }
         return null;
     }
 
@@ -231,6 +250,7 @@ public final class CapacityWaitQueue {
         private final Domain domain;
         private Budget budget;
         private long epoch;
+        private Set<Long> candidateGenerations = Set.of();
 
         private Waiter(Domain domain) {
             this.domain = domain;
@@ -249,6 +269,7 @@ public final class CapacityWaitQueue {
         private long capacity;
         private long spent;
         private long epoch;
+        private boolean periodic;
         private int oldInFlight;
         private int inFlight;
 
@@ -256,7 +277,8 @@ public final class CapacityWaitQueue {
             this.key = key;
         }
 
-        private void refresh(long available) {
+        private void refresh(long available, boolean periodicCheck) {
+            periodic = periodicCheck;
             capacity = available;
             spent = 0L;
             oldInFlight = inFlight;

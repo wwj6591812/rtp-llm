@@ -29,7 +29,7 @@ import static com.google.common.base.Preconditions.checkState;
 @Getter
 @Setter
 public final class FlexlbConfig {
-    public static final int CURRENT_SCHEMA_VERSION = ConfigSchemaVersion.V4;
+    public static final int CURRENT_SCHEMA_VERSION = ConfigSchemaVersion.V5;
 
     private int schemaVersion = CURRENT_SCHEMA_VERSION;
 
@@ -81,7 +81,20 @@ public final class FlexlbConfig {
 
     @JsonIgnore
     public long resolveExpiresAtMs(long startTime) {
-        return isQueue() ? scheduler.resolveExpiresAtMs(startTime) : Long.MAX_VALUE;
+        return com.google.common.math.LongMath.saturatedAdd(
+                startTime, requestLifecycle.getDispatchTimeoutMs());
+    }
+
+    @JsonIgnore
+    public int defaultPriority() {
+        return isPriorityOrdering()
+                ? scheduler.getOrdering().getPriority().getDefaultPriority()
+                : 50;
+    }
+
+    @JsonIgnore
+    public boolean isPriorityOrdering() {
+        return isQueue() && scheduler.getOrdering().getPriority().isEnabled();
     }
 
     @JsonIgnore
@@ -90,20 +103,10 @@ public final class FlexlbConfig {
     }
 
     @JsonIgnore
-    public int defaultPriority() {
-        return isPriorityOrdering() ? scheduler.getOrdering().getDefaultPriority() : 50;
-    }
-
-    @JsonIgnore
-    public boolean isPriorityOrdering() {
-        return isQueue() && scheduler.getOrdering().getType() == QueueOrderingConfig.Type.PRIORITY;
-    }
-
-    @JsonIgnore
     public QueueOrderingConfig priorityOrdering() {
         QueueOrderingConfig ordering = queueScheduler().getOrdering();
         checkState(
-                ordering.getType() == QueueOrderingConfig.Type.PRIORITY,
+                ordering.getPriority().isEnabled(),
                 "priority ordering configuration is not active");
         return ordering;
     }

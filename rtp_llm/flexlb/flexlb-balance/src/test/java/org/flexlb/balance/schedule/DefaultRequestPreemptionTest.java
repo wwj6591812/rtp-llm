@@ -102,6 +102,35 @@ class DefaultRequestPreemptionTest {
         }
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void unavailableWorkerEndsPreemptionWaitWithoutVictimFinishedReport(boolean closeEndpoint) {
+        try (var f = new Fixture()) {
+            var completions = new java.util.concurrent.atomic.AtomicInteger();
+            assertTrue(
+                    f.preemption.start(
+                            f.selection,
+                            f.endpoint,
+                            acquired -> {
+                                assertNull(
+                                        acquired,
+                                        "resources from unavailable A must not be handed to the scheduler");
+                                completions.incrementAndGet();
+                            }));
+            assertFalse(f.preemption.isIdle());
+            if (closeEndpoint) EndpointTestSupport.closeAndWait(f.endpoint);
+            else f.endpoint.getStatus().markRemovedFromDiscovery();
+            f.runChecks();
+            assertEquals(1, completions.get(), "one check must release the scheduler to reselect");
+            assertTrue(f.preemption.isIdle());
+            f.runChecks();
+            assertEquals(1, completions.get(), "late checks must not resume twice");
+            assertNull(
+                    org.springframework.test.util.ReflectionTestUtils.getField(
+                            f.request, "currentResourceWait"));
+        }
+    }
+
     @Test
     void stoppingEndsWaitWithoutWaitingForTheCancelledWorker() {
         try (var f = new Fixture()) {

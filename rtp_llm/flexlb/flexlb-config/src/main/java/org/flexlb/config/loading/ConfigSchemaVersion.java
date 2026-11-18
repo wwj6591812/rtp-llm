@@ -11,11 +11,12 @@ public final class ConfigSchemaVersion {
     public static final int V0_COMPATIBILITY = 0;
 
     public static final int V4 = 4;
+    public static final int V5 = 5;
 
     /**
      * Current normalized FlexLB configuration document.
      */
-    public static final int STANDARD = V4;
+    public static final int STANDARD = V5;
 
     private ConfigSchemaVersion() {}
 }

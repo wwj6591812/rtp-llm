@@ -20,6 +20,17 @@ public final class PrefillTimePredictor {
                         : ArithmeticFormula.parse(expression, Map.of("computeTokens", 0));
     }
 
+    /**
+     * Default singleton time model from the upstream Prefill formula, in milliseconds.
+     * Its coefficients are time estimates; the configurable ranking score has no time unit.
+     */
+    public static long estimateDurationMs(long inputTokens, long hitTokens) {
+        long input = Math.max(0L, inputTokens);
+        long hit = Math.clamp(hitTokens, 0L, input);
+        double duration = Math.ceil((input - hit) + 0.02 * hit);
+        return duration >= Long.MAX_VALUE ? Long.MAX_VALUE : (long) duration;
+    }
+
     public long computeTokens(long inputTokens, long cacheHitTokens) {
         long input = Math.max(0L, inputTokens);
         return input - Math.clamp(cacheHitTokens, 0L, input);

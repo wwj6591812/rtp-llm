@@ -148,6 +148,15 @@ public class EndpointRegistry
         return endpoints == null ? null : endpoints.get(address);
     }
 
+    /**
+     * Wakes capacity waiters after cache indexing for the current worker generation.
+     */
+    public void publishCacheAvailability(WorkerStatus status) {
+        var endpoint = getEndpoint(status.getRole(), status.getIpPort());
+        if (endpoint != null && endpoint.getStatus() == status && status.isActiveGeneration())
+            capacityNotifier.notifyChanged(endpoint);
+    }
+
     public WorkerStatus currentOrDiscover(
             RoleType role, String address, Supplier<WorkerStatus> factory) {
         Objects.requireNonNull(role);

@@ -27,7 +27,7 @@ class PrefillComputeTokensTest {
     @BeforeEach
     void setUp() {
         var config = new FlexlbConfig();
-        config.getRouter().getRoles().getPrefill().setMaxComputeTokens(100L);
+        config.getRouter().getRoles().getPrefill().getAdmission().setMaxInflightRequests(2);
         var status = EndpointTestSupport.workerStatus(RoleType.PREFILL, "127.0.0.1", 8080, 8081);
         endpoint = new PrefillEndpoint(status, config, new CapacityNotifier());
         var response = new WorkerStatusResponse();
@@ -97,7 +97,7 @@ class PrefillComputeTokensTest {
         report.setRunningQueryLen(1);
         EndpointTestSupport.applyStatus(endpoint, report).run();
         var unknown = endpoint.selectionSnapshot();
-        assertEquals(100L, unknown.computeTokens());
+        assertEquals(Long.MAX_VALUE, unknown.computeTokens());
         assertSame(unknown, endpoint.selectionSnapshot());
         report.setRunningQueryLen(0);
         EndpointTestSupport.applyStatus(endpoint, report).run();
@@ -108,11 +108,12 @@ class PrefillComputeTokensTest {
     void outdatedSnapshotReportsFullOnlyWhenCurrentCapacityIsInsufficient() {
         var snapshot = endpoint.selectionSnapshot();
         endpoint.tryRegisterSelection("existing", snapshot, 70L);
+        endpoint.tryRegisterSelection("occupant", endpoint.selectionSnapshot(), 0L);
         assertEquals(
                 WorkerEndpoint.RegistrationStatus.CAPACITY_FULL,
                 endpoint.tryRegisterSelection("full", snapshot, 40L).status());
         assertEquals(
-                WorkerEndpoint.RegistrationStatus.VERSION_CONFLICT,
+                WorkerEndpoint.RegistrationStatus.CAPACITY_FULL,
                 endpoint.tryRegisterSelection("fits", snapshot, 20L).status());
         assertEquals(70L, endpoint.selectionSnapshot().computeTokens());
     }
@@ -138,6 +139,7 @@ class PrefillComputeTokensTest {
 
     @Test
     void concurrentSelectionsCannotExceedWorkerCapacity() throws Exception {
+        endpoint.tryRegisterSelection("occupant", endpoint.selectionSnapshot(), 0L);
         var snapshot = endpoint.selectionSnapshot();
         var start = new CountDownLatch(1);
         try (var workers = Executors.newFixedThreadPool(2)) {
@@ -181,7 +183,7 @@ class PrefillComputeTokensTest {
         var actual = endpoint.selectionSnapshot();
         var stale =
                 new PrefillEndpoint.SelectionSnapshot(
-                        actual.generationId() + 1, actual.resourceVersion(), 0L, 100L);
+                        actual.generationId() + 1, actual.resourceVersion(), 0L, 0L, 128, false);
         assertEquals(
                 WorkerEndpoint.RegistrationStatus.VERSION_CONFLICT,
                 endpoint.tryRegisterSelection("request", stale, 10L).status());

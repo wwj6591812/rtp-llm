@@ -135,6 +135,7 @@ public class GrpcCacheStatusCheckRunner extends AbstractStatusRunner {
             logger.debug("gRPC Cache Status - handled for {}, role:{}", ipPort, roleType.name());
 
             long successfulIntervalUs;
+            boolean cacheIndexed = false;
             pollLease.trace().record(Stage.CACHE_MUTATION_LOCK_ATTEMPT);
             workerStatus.cacheMutationLock.lock();
             pollLease.trace().record(Stage.CACHE_MUTATION_LOCK_ACQUIRED);
@@ -171,6 +172,7 @@ public class GrpcCacheStatusCheckRunner extends AbstractStatusRunner {
                             && (!roleType.requiresCacheKeys() || updateLocalKvCache())) {
                         if (workerStatus.isActiveGeneration()) {
                             workerStatus.publishCacheIndexedVersion(newCacheStatus.getVersion());
+                            cacheIndexed = true;
                         }
                     }
                     logCacheStatusUpdate(newCacheStatus, startTime);
@@ -181,6 +183,7 @@ public class GrpcCacheStatusCheckRunner extends AbstractStatusRunner {
                 pollLease.trace().record(Stage.CACHE_MUTATION_LOCK_RELEASED);
             }
 
+            if (cacheIndexed) endpointRegistry.publishCacheAvailability(workerStatus);
             serviceMetricsReporter.reportCacheStatusCheckRemoteInfo(
                     modelName, roleType.name(), startTime);
             serviceMetricsReporter.reportCacheStatusCheckerSuccess(

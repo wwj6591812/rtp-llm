@@ -120,13 +120,11 @@ public final class V0ConfigDocumentParser implements ConfigDocumentParser {
         if (!configured) {
             return;
         }
-        ObjectNode cacheAffinity = prefill.putObject("cacheAffinity");
+        if (v0Config.has("cacheAffinityFirstOutstandingUncachedTokensThreshold"))
+            throw new IllegalArgumentException(
+                    "compute-token caps were removed; configure Prefill admission.maxInflightRequests in schemaVersion 5");
+        ObjectNode cacheAffinity = prefill.putObject("selection").putObject("cacheAffinity");
         copyField(v0Config, cacheAffinity, "cacheAffinityFirstMinHitRate", "minPrefixHitPercent");
-        copyField(
-                v0Config,
-                cacheAffinity,
-                "cacheAffinityFirstOutstandingUncachedTokensThreshold",
-                "maxComputeTokens");
     }
 
     private static void configureWorkerHealth(ObjectNode v0Config, ObjectNode flexlbConfig) {

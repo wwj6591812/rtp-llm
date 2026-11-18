@@ -33,15 +33,32 @@ class ConfigServiceTest {
                         .getRouter()
                         .getRoles()
                         .getPrefill()
+                        .getSelection()
                         .getCostExpression());
         var config =
                 ConfigTestFixtures.parse(
-                        """
-                {"schemaVersion":4,"router":{"roles":{"prefill":{"costExpression":"10 + computeTokens * 0.5"}}}}
-                """);
+"""
+{
+  "schemaVersion": 5,
+  "router": {
+    "roles": {
+      "prefill": {
+        "selection": {
+          "type": "COST_BASED",
+          "costExpression": "10 + computeTokens * 0.5"
+        }
+      }
+    }
+  }
+}
+""");
         var predictor =
                 new org.flexlb.util.formula.PrefillTimePredictor(
-                        config.getRouter().getRoles().getPrefill().getCostExpression());
+                        config.getRouter()
+                                .getRoles()
+                                .getPrefill()
+                                .getSelection()
+                                .getCostExpression());
         assertEquals(35.0, predictor.score(50));
         for (String expression :
                 new String[] {"", "unknown", "sum(computeTokens)", "computeTokens +"}) {
@@ -210,7 +227,7 @@ class ConfigServiceTest {
                         .loadBalanceConfig();
 
         assertEquals(FlexlbConfig.CURRENT_SCHEMA_VERSION, config.getSchemaVersion());
-        assertEquals(60000L, config.getRequestLifecycle().getRequest().getTimeoutMs());
+        assertEquals(60000L, config.getRequestLifecycle().getInactivityTimeoutMs());
         assertThrows(ConfigValidationException.class, () -> new ConfigService(Map.of()));
         assertThrows(
                 ConfigValidationException.class,
@@ -332,7 +349,7 @@ class ConfigServiceTest {
         assertSame(original, estimator.compiledFormula());
         FlexlbConfigValidator.validate(config);
         assertSame(original, estimator.compiledFormula());
-        estimator.setExpression("running_size");
+        estimator.setExpression("kvcache_used_ratio");
         var changed = estimator.compiledFormula();
         assertNotSame(original, changed);
         assertSame(changed, estimator.compiledFormula());
@@ -352,19 +369,34 @@ class ConfigServiceTest {
                 }) {
             assertInvalid(
                     """
-                    {"scheduler":{"ordering":{"type":"PRIORITY","preemption":{
-                      "allowedVictimStages":["DECODE_ENGINE_OWNED"],"timeoutMs":%s}}}}
+                    {"scheduler":{"ordering":{"priority":{"enabled":true,"preemption":{
+                      "allowedVictimStages":["DECODE_ENGINE_OWNED"],"timeoutMs":%s}}}}}
                     """
                             .formatted(value),
                     "timeoutMs");
         }
         FlexlbConfig config =
                 ConfigTestFixtures.parse(
-                        """
-                {"scheduler":{"ordering":{"type":"PRIORITY","preemption":{
-                  "allowedVictimStages":["DECODE_ENGINE_OWNED"]}}}}
-                """);
-        config.priorityOrdering().getPreemption().setTimeoutMs(0);
+"""
+{
+  "scheduler": {
+    "ordering": {
+      "priority": {
+        "enabled": true,
+        "preemption": {
+          "allowedVictimStages": [
+            "DECODE_ENGINE_OWNED"
+          ]
+        }
+      },
+      "policy": {
+        "type": "FIFO"
+      }
+    }
+  }
+}
+""");
+        config.priorityOrdering().getPriority().getPreemption().setTimeoutMs(0);
         assertThrows(ConfigValidationException.class, () -> FlexlbConfigValidator.validate(config));
     }
 
@@ -426,7 +458,7 @@ class ConfigServiceTest {
                     (ObjectNode)
                             json.readTree(
                                     ConfigTestFixtures.document(
-                                            "{\"scheduler\":{\"ordering\":{\"type\":\"PRIORITY\",\"preemption\":{\"allowedVictimStages\":[\"DECODE_ENGINE_OWNED\"]}}}}"));
+                                            "{\"scheduler\":{\"ordering\":{\"priority\":{\"enabled\":true,\"preemption\":{\"allowedVictimStages\":[\"DECODE_ENGINE_OWNED\"]}},\"policy\":{\"type\":\"FIFO\"}}}}"));
             String[] names = entry.getKey().split("\\.");
             ObjectNode node = root;
             for (int i = 0; i < names.length - 1; i++) {
@@ -445,14 +477,14 @@ class ConfigServiceTest {
         for (String document :
                 new String[] {
                     ConfigTestFixtures.REQUIRED.replace(
-                            "\"schemaVersion\": 4", "\"schemaVersion\": 4, \"schemaVersion\": 4"),
+                            "\"schemaVersion\": 5", "\"schemaVersion\": 5, \"schemaVersion\": 5"),
                     ConfigTestFixtures.REQUIRED + " {}",
                     ConfigTestFixtures.document("{\"router\":null}"),
                     ConfigTestFixtures.document("{\"schemaVersion\":\"3\"}"),
-                    ConfigTestFixtures.document("{\"schemaVersion\":4.5}"),
+                    ConfigTestFixtures.document("{\"schemaVersion\":5.5}"),
                     ConfigTestFixtures.document("{\"internalRuntime\":{}}"),
                     ConfigTestFixtures.document(
-                            "{\"requestLifecycle\":{\"request\":{\"timeoutMs\":\"60000\"}}}"),
+                            "{\"requestLifecycle\":{\"inactivityTimeoutMs\": \"60000\"}}"),
                     ConfigTestFixtures.document(
                             "{\"requestLifecycle\":{\"decision\":{\"lifetime\":\"2\"}}}"),
                     ConfigTestFixtures.document("{\"scheduler\":{\"type\":0}}")
@@ -460,7 +492,7 @@ class ConfigServiceTest {
             assertThrows(
                     ConfigValidationException.class, () -> ConfigService.parse(document), document);
         }
-        for (int version : new int[] {1, 2, 3, 5}) {
+        for (int version : new int[] {1, 2, 3, 4}) {
             assertInvalid("{\"schemaVersion\":" + version + "}", "schemaVersion");
         }
     }
@@ -510,7 +542,7 @@ class ConfigServiceTest {
             String document =
                     java.nio.file.Files.readString(
                             java.nio.file.Path.of("../docs/config-examples", name));
-            assertEquals(4, ConfigService.parse(document).getSchemaVersion());
+            assertEquals(5, ConfigService.parse(document).getSchemaVersion());
         }
     }
 

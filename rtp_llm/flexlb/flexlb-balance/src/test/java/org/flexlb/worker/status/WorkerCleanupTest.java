@@ -35,7 +35,7 @@ class WorkerCleanupTest {
         FlexlbConfig config =
                 ConfigService.parse(
                         """
-                {"requestLifecycle":{"request":{"timeoutMs":60000}},
+                {"requestLifecycle":{"inactivityTimeoutMs": 60000},
                  "workerRegistry":{"health":{"cleanupIntervalMs":1250}}}
                 """);
         ConfigService configService = mock(ConfigService.class);

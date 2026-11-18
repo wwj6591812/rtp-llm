@@ -21,7 +21,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * Checks compute-token ranking, absolute capacity limits and retrying another eligible worker.
+ * Checks token ranking, request admission and fallback to another eligible worker.
  */
 class CostBasedPrefillStrategyBlockerTest {
     @Test
@@ -66,14 +66,15 @@ class CostBasedPrefillStrategyBlockerTest {
     }
 
     @Test
-    void emptyCacheStillHonorsCacheFirstCap() {
+    void emptyCacheUsesSharedRequestAdmission() {
         var config = new FlexlbConfig();
         var affinity = new RoutingConfig.CacheAffinityConfig();
-        affinity.setMaxComputeTokens(99L);
-        config.getRouter().getRoles().getPrefill().setCacheAffinity(affinity);
+        config.getRouter().getRoles().getPrefill().getSelection().setCacheAffinity(affinity);
         assertEquals(
-                java.util.Optional.empty(),
-                select(strategy(config, Map.of()), List.of(input("idle", 0, 1000))));
+                "idle",
+                select(strategy(config, Map.of()), List.of(input("idle", 0, 1000)))
+                        .orElseThrow()
+                        .address());
     }
 
     @Test
@@ -90,7 +91,11 @@ class CostBasedPrefillStrategyBlockerTest {
     @Test
     void customFormulaRanksEligibleWorkersWithoutChangingTokenCapacity() {
         var config = new FlexlbConfig();
-        config.getRouter().getRoles().getPrefill().setCostExpression("1000 - computeTokens");
+        config.getRouter()
+                .getRoles()
+                .getPrefill()
+                .getSelection()
+                .setCostExpression("1000 - computeTokens");
         var strategy = strategy(config, Map.of());
         var result =
                 select(
@@ -98,7 +103,7 @@ class CostBasedPrefillStrategyBlockerTest {
                         List.of(
                                 input("idle", 0, 200),
                                 input("busy", 80, 200),
-                                input("full", 150, 200)));
+                                input("full", 200, 200)));
         assertEquals("busy", result.orElseThrow().address());
         assertEquals(
                 180,
@@ -107,16 +112,15 @@ class CostBasedPrefillStrategyBlockerTest {
     }
 
     @Test
-    void customFormulaCannotBypassCacheFirstTokenCap() {
+    void customFormulaCannotBypassRequestAdmission() {
         var config = new FlexlbConfig();
-        config.getRouter().getRoles().getPrefill().setCostExpression("0");
+        config.getRouter().getRoles().getPrefill().getSelection().setCostExpression("0");
         var affinity = new RoutingConfig.CacheAffinityConfig();
-        affinity.setMaxComputeTokens(100L);
-        config.getRouter().getRoles().getPrefill().setCacheAffinity(affinity);
+        config.getRouter().getRoles().getPrefill().getSelection().setCacheAffinity(affinity);
         var result =
                 select(
                         strategy(config, Map.of("cached", 80, "other", 30)),
-                        List.of(input("cached", 90, 1000), input("other", 0, 1000)));
+                        List.of(input("cached", 90, 90), input("other", 0, 1000)));
         assertEquals("other", result.orElseThrow().address());
     }
 
@@ -155,7 +159,7 @@ class CostBasedPrefillStrategyBlockerTest {
     @Test
     void skipsFullWorkerAndAcceptsExactlyAtCapacity() {
         var strategy = strategy(new FlexlbConfig(), Map.of());
-        var result = select(strategy, List.of(input("full", 1, 100), input("fits", 0, 100)));
+        var result = select(strategy, List.of(input("full", 100, 100), input("fits", 0, 100)));
         assertEquals("fits", result.orElseThrow().address());
         assertEquals(
                 100,
@@ -165,18 +169,18 @@ class CostBasedPrefillStrategyBlockerTest {
 
     @Test
     void allFullWorkersHaveNoSelection() {
-        var result = select(strategy(new FlexlbConfig(), Map.of()), List.of(input("full", 1, 100)));
+        var result =
+                select(strategy(new FlexlbConfig(), Map.of()), List.of(input("full", 100, 100)));
         org.junit.jupiter.api.Assertions.assertTrue(result.isEmpty());
     }
 
     @Test
-    void cacheFirstCannotExceedItsAbsoluteComputeTokenCap() {
+    void cacheFirstFallsBackWhenTheLeaderHasNoRequestSlot() {
         var config = new FlexlbConfig();
         var affinity = new RoutingConfig.CacheAffinityConfig();
-        affinity.setMaxComputeTokens(80L);
-        config.getRouter().getRoles().getPrefill().setCacheAffinity(affinity);
+        config.getRouter().getRoles().getPrefill().getSelection().setCacheAffinity(affinity);
         var strategy = strategy(config, Map.of("cached", 80, "other", 30));
-        var result = select(strategy, List.of(input("cached", 70, 1000), input("other", 0, 1000)));
+        var result = select(strategy, List.of(input("cached", 70, 70), input("other", 0, 1000)));
         assertEquals("other", result.orElseThrow().address());
         assertEquals(
                 70,
@@ -186,11 +190,10 @@ class CostBasedPrefillStrategyBlockerTest {
     }
 
     @Test
-    void cacheFirstPrefersMoreHitsAmongWorkersWithinBothCaps() {
+    void cacheFirstPrefersMoreHitsAmongAdmissibleWorkers() {
         var config = new FlexlbConfig();
         var affinity = new RoutingConfig.CacheAffinityConfig();
-        affinity.setMaxComputeTokens(100L);
-        config.getRouter().getRoles().getPrefill().setCacheAffinity(affinity);
+        config.getRouter().getRoles().getPrefill().getSelection().setCacheAffinity(affinity);
         var strategy = strategy(config, Map.of("cached", 80, "other", 30));
         var result = select(strategy, List.of(input("cached", 70, 1000), input("other", 0, 1000)));
         assertEquals("cached", result.orElseThrow().address());
@@ -231,7 +234,12 @@ class CostBasedPrefillStrategyBlockerTest {
         when(endpoint.selectionSnapshot())
                 .thenReturn(
                         new PrefillEndpoint.SelectionSnapshot(
-                                status.getGenerationId(), 0L, work, cap));
+                                status.getGenerationId(),
+                                0L,
+                                work,
+                                work >= cap ? 128L : 0L,
+                                128,
+                                false));
         return endpoint;
     }
 

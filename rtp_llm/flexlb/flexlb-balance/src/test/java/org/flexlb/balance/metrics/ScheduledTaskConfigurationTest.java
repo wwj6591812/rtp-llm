@@ -36,7 +36,7 @@ class ScheduledTaskConfigurationTest {
         var config =
                 ConfigService.parse(
                         """
-                {"requestLifecycle":{"request":{"timeoutMs":60000}},
+                {"requestLifecycle":{"inactivityTimeoutMs": 60000},
                  "workerRegistry":{"health":{"cleanupIntervalMs":1250}}}
                 """);
         var service = mock(ConfigService.class);

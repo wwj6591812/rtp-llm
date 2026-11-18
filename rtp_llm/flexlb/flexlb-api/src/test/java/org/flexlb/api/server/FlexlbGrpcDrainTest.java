@@ -54,7 +54,7 @@ class FlexlbGrpcDrainTest {
                 .thenReturn(
                         ConfigService.parse(
                                 """
-                {"requestLifecycle":{"request":{"timeoutMs":60000}},
+                {"requestLifecycle":{"inactivityTimeoutMs": 60000},
                  "grpcServer":{"shutdownQuietPeriodMs":100}}
                 """));
         var routes = mock(org.flexlb.balance.schedule.AbstractRequestScheduler.class);
@@ -218,7 +218,7 @@ class FlexlbGrpcDrainTest {
                     .thenReturn(
                             ConfigService.parse(
                                     """
-                    {"requestLifecycle":{"request":{"timeoutMs":60000}},
+                    {"requestLifecycle":{"inactivityTimeoutMs": 60000},
                      "grpcServer":{"shutdownQuietPeriodMs":%d}}
                     """
                                             .formatted(quietMs)));

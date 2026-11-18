@@ -8,8 +8,8 @@ RequestRoute 组合本次选择的全部角色。旧代际回调不能修改同�
 
 请求清理由 Scheduler 集中决定：Context 只保存提交、结束、远端释放确认和清理进度；
 RoleSelection 不执行回滚或释放。尚未交接的选择失败由选址流程回滚，交接后的请求由
-Scheduler 统一清理。已提交的 Decode 等待远端释放确认；长期无活动时保留既有的本地登记
-过期清理规则，删除登记不抵扣 Worker 已上报的执行容量。
+Scheduler 统一清理。已提交的 Prefill/Decode 等待远端释放确认；长期无活动进入取消流程，
+不提前释放容量。仅没有被 Scheduler 保留的孤儿记录参与 Endpoint TTL 清理。
 DecodeEndpoint 在同一次持锁操作中核对精确登记身份、确认执行状态并修改账本：
 严格回滚拒绝已确认执行的登记；仅清理未确认登记时，返回仍需等待或已清理（含登记已不存在）。
 容量变化通知在锁外执行，部分角色清理失败不抹去其他角色的已完成进度。
@@ -21,7 +21,7 @@ Endpoint 查询统一为 `endpoints(role, group)` 和 `getEndpoint(role, address
 group 为 null 时包含全部分组；后者只查当前地址映射。角色策略负责读取容量快照，并在登记前检查接纳状态及代际。
 监控直接遍历同一列表，不再构造统计专用的节点 Map。
 
-PrefillEndpoint.SelectionSnapshot 只包含 generationId、resourceVersion、computeTokens 和 maxComputeTokens。
+PrefillEndpoint.SelectionSnapshot 包含 generationId、resourceVersion、computeTokens、outstandingRequests、maxInflightRequests 和 engineQueueBlocked。
 快照按现有资源版本和代际复用，资源未变时不重复创建。策略读取快照比较工作量，
 tryRegisterSelection 在 Endpoint 状态锁内检查代际、当前工作量和剩余容量，
 登记后立即计入工作量。冲突时重新选择，容量不足时尝试其他候选；没有候选则等待容量变化。
@@ -75,7 +75,9 @@ PrefillEndpoint.RequestRegistration 保存 requestId、computeTokens、事件接
 本地请求按登记值计数，不根据经过时间衰减，也不学习执行耗时。
 
 上报的未知运行请求按 inputLength 减有效 prefixLength 统计 compute tokens。
-缺少输入长度或任务明细时保守占满配置容量。已知本地请求不会再次计入未知工作量。
+缺少输入长度或任务明细时以 Long.MAX_VALUE 表示未知工作量，不伪造 token 容量。
+请求数取本地登记与未被本地记录覆盖的 Engine 请求数之和；相同身份不会重复计数。
+已提交记录只有本轮 Engine 观察匹配时才抵消未观察登记的水位占用，旧观察不能永久提供准入额度。
 可用容量增加后通知全局等待队列；Endpoint 内不保存等待派发队列或批次记录。
 
 ## Decode

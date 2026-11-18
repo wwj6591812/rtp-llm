@@ -165,8 +165,11 @@ PAI-vLLM 端的 Encoder 状态上报不属于 FlexLB 实现范围。
 
 `GrpcCacheStatusCheckRunner`：挂在 20ms 同步 tick 上，但 PREFILL/PDFUSION 按
 `DynamicCacheIntervalService.getCurrentIntervalMs()` 降频（跳 tick 实现）。请求携带当前
-cache 版本做增量；响应恒更新 KV token 总量，版本更新时把 `cached_keys`（block hash 集合）
+cache 版本做增量。Decode 只拉元数据，初始化后按至少 1000ms 的 tick 周期拉取；是否到期在执行器交接前决定。
+响应恒更新 KV token 总量，版本更新时把 `cached_keys`（block hash 集合）
 经 `CacheAwareService.updateFromWorkerStatus()` 喂给本地索引（仅 PREFILL/PDFUSION）。
+索引成功后在缓存锁外通知当前 Endpoint 代际的容量等待者；失败或旧代际不能发布可用通知。
+WorkerStatus 的 running/waiting 数分别取 Engine 汇总与有效任务明细计数的较大值，排除纯取消覆盖条目。
 
 **动态间隔**：`DefaultDynamicCacheIntervalService` 维护 30 样本滚动平均 diff 大小，目标
 `CACHE_STATUS_DIFF_SIZE(30)`；偏差 >10% 时按 ±30% 调整间隔，钳制在
