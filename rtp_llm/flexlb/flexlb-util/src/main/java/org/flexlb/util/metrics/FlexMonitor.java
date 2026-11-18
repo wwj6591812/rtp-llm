@@ -10,6 +10,13 @@ package org.flexlb.util.metrics;
  */
 public interface FlexMonitor extends AutoCloseable {
     /**
+     * Allows callers to avoid collecting snapshots for disabled metrics.
+     */
+    default boolean isEnabled(String metricName) {
+        return true;
+    }
+
+    /**
      * Read a live gauge or cumulative counter at collection time. Spring assembly binds
      * these sources to MeterRegistry independently of the business reporting backend.
      * A service binds each name once; replacing sources or unregistering bindings is unsupported.

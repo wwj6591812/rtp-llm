@@ -100,6 +100,12 @@ public class MicrometerFlexMonitor implements FlexMonitor {
     }
 
     @Override
+    public boolean isEnabled(String metricName) {
+        var allowed = ALLOWED_METRICS;
+        return allowed == null || allowed.contains(metricName);
+    }
+
+    @Override
     public void register(String metricName, FlexMetricType metricType) {
         try {
             Set<String> allowedMetrics = ALLOWED_METRICS;

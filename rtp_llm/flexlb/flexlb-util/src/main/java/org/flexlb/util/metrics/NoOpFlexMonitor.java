@@ -8,6 +8,11 @@ public class NoOpFlexMonitor implements FlexMonitor {
 
     private static final NoOpFlexMonitor INSTANCE = new NoOpFlexMonitor();
 
+    @Override
+    public boolean isEnabled(String metricName) {
+        return false;
+    }
+
     public static NoOpFlexMonitor getInstance() {
         return INSTANCE;
     }

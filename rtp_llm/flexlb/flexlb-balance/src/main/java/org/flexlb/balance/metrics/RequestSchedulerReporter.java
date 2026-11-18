@@ -50,6 +50,14 @@ public class RequestSchedulerReporter {
      */
     private static final FlexMetricTags[] PRIORITY_TAGS = buildPriorityTags();
 
+    private static final java.util.List<String> DECODE_GAUGES =
+            java.util.List.of(
+                    AUTO_TPM_DECODE_RUNNING_COUNT,
+                    AUTO_TPM_DECODE_ACCEPTED_COUNT,
+                    AUTO_TPM_DECODE_ENGINE_LOAD,
+                    AUTO_TPM_DECODE_RESERVED_COUNT,
+                    AUTO_TPM_DECODE_SHADOW_KV_RESERVED);
+
     private final FlexMonitor monitor;
 
     @Autowired
@@ -87,15 +95,9 @@ public class RequestSchedulerReporter {
                 }) {
             monitor.register(metric, FlexMetricType.TIMER, FlexPriorityType.PRECISE);
         }
-        for (String metric :
-                new String[] {
-                    AUTO_TPM_PREFILL_QUEUE_DEPTH,
-                    AUTO_TPM_DECODE_RUNNING_COUNT,
-                    AUTO_TPM_DECODE_ACCEPTED_COUNT,
-                    AUTO_TPM_DECODE_ENGINE_LOAD,
-                    AUTO_TPM_DECODE_RESERVED_COUNT,
-                    AUTO_TPM_DECODE_SHADOW_KV_RESERVED,
-                }) {
+        monitor.register(
+                AUTO_TPM_PREFILL_QUEUE_DEPTH, FlexMetricType.GAUGE, FlexPriorityType.PRECISE);
+        for (String metric : DECODE_GAUGES) {
             monitor.register(metric, FlexMetricType.GAUGE, FlexPriorityType.PRECISE);
         }
     }
@@ -209,6 +211,10 @@ public class RequestSchedulerReporter {
                         "code",
                         String.valueOf(code)),
                 1);
+    }
+
+    boolean reportsDecodeGauges() {
+        return DECODE_GAUGES.stream().anyMatch(monitor::isEnabled);
     }
 
     private static FlexMetricTags[] buildPriorityTags() {

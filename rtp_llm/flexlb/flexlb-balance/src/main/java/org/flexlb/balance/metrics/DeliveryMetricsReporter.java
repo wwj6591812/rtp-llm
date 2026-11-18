@@ -80,14 +80,17 @@ public class DeliveryMetricsReporter implements org.flexlb.worker.endpoint.Endpo
                                 org.flexlb.config.service.RoleType.PREFILL, null),
                 this::reportPrefill,
                 (address, endpoint) -> requestReporter.reportPrefillQueueDepth(address, 0));
+        boolean reportDecodeGauges = requestReporter.reportsDecodeGauges();
         reportEndpoints(
                 "Decode",
                 () ->
                         endpoints.<org.flexlb.worker.endpoint.DecodeEndpoint>endpoints(
                                 org.flexlb.config.service.RoleType.DECODE, null),
                 this::reportDecode,
-                (address, endpoint) ->
-                        requestReporter.reportDecodePreemption(address, endpoint.stats()));
+                (address, endpoint) -> {
+                    if (reportDecodeGauges)
+                        requestReporter.reportDecodePreemption(address, endpoint.stats());
+                });
     }
 
     // ==================== Inflight metrics ====================

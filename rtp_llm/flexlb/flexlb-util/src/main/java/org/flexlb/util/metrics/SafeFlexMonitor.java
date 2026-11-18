@@ -19,6 +19,16 @@ public final class SafeFlexMonitor implements FlexMonitor {
         this.observations = observations;
     }
 
+    @Override
+    public boolean isEnabled(String metricName) {
+        try {
+            return delegate.isEnabled(metricName);
+        } catch (Throwable failure) {
+            logFailure(metricName, failure);
+            return false;
+        }
+    }
+
     public static FlexMonitor wrap(FlexMonitor monitor) {
         if (monitor == null) {
             return NoOpFlexMonitor.getInstance();

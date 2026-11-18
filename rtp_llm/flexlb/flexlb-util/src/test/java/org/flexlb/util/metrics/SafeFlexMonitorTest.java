@@ -28,6 +28,20 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
  */
 class SafeFlexMonitorTest {
 
+    @Test
+    void metricEnablementUsesBackendAndIsolatesFailures() {
+        var backend = mock(FlexMonitor.class);
+        org.mockito.Mockito.when(backend.isEnabled("enabled")).thenReturn(true);
+        org.mockito.Mockito.when(backend.isEnabled("broken"))
+                .thenThrow(new IllegalStateException());
+        var safe = SafeFlexMonitor.wrap(backend);
+        org.junit.jupiter.api.Assertions.assertTrue(safe.isEnabled("enabled"));
+        org.junit.jupiter.api.Assertions.assertFalse(safe.isEnabled("disabled"));
+        org.junit.jupiter.api.Assertions.assertFalse(safe.isEnabled("broken"));
+        org.junit.jupiter.api.Assertions.assertFalse(
+                NoOpFlexMonitor.getInstance().isEnabled("enabled"));
+    }
+
     static Stream<Object[]> operations() {
         var tags = FlexMetricTags.of("role", "PREFILL");
         var operations =
