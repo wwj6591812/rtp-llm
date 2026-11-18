@@ -8,7 +8,7 @@ import org.flexlb.util.Failures;
 import org.flexlb.worker.endpoint.CapacityKey;
 import org.flexlb.worker.endpoint.EncoderEndpoint;
 import org.flexlb.worker.endpoint.EndpointRegistry;
-import org.flexlb.worker.endpoint.RequestCapacity;
+import org.flexlb.worker.endpoint.WorkerAdmissionCapacity;
 import org.flexlb.worker.endpoint.WorkerEndpoint;
 import org.springframework.stereotype.Component;
 
@@ -34,7 +34,7 @@ public class EncoderStrategy
                 config.loadBalanceConfig().getRouter().getRoles().getEncoder().getMaxRequests();
     }
 
-    public RequestCapacity requestCapacity(EncoderEndpoint endpoint) {
+    public WorkerAdmissionCapacity requestCapacity(EncoderEndpoint endpoint) {
         return endpoint.requestCapacity(maxRequests);
     }
 

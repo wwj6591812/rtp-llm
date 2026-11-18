@@ -27,12 +27,12 @@ public final class EncoderEndpoint extends WorkerEndpoint implements SelectionRo
         this.capacityNotifier = capacityNotifier;
     }
 
-    public RequestCapacity requestCapacity(int requestLimit) {
+    public WorkerAdmissionCapacity requestCapacity(int requestLimit) {
         stateLock().lock();
         try {
             var snapshot = captureSelectionSnapshot(false);
             var status = getStatus();
-            return new RequestCapacity(
+            return new WorkerAdmissionCapacity(
                     CapacityKey.exact(status.getRole(), snapshot.group(), ipPort()),
                     status.getGenerationId(),
                     capacityRevision,

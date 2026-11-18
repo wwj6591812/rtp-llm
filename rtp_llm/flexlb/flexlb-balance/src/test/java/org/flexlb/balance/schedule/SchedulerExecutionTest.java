@@ -10,7 +10,7 @@ import org.flexlb.balance.strategy.RequestRouteSelector;
 import org.flexlb.config.service.RoleType;
 import org.flexlb.worker.endpoint.CapacityKey;
 import org.flexlb.worker.endpoint.CapacityNotifier;
-import org.flexlb.worker.endpoint.RequestCapacity;
+import org.flexlb.worker.endpoint.WorkerAdmissionCapacity;
 import org.flexlb.worker.endpoint.WorkerEndpoint;
 import org.flexlb.worker.status.WorkerStatus;
 import org.junit.jupiter.api.Test;
@@ -78,9 +78,9 @@ class SchedulerExecutionTest {
         ReflectionTestUtils.setField(scheduler, "router", router);
         when(router.requestCapacity(endpoint))
                 .thenReturn(
-                        new RequestCapacity(worker, 1L, 1L, 1L),
-                        new RequestCapacity(worker, 1L, 2L, 0L),
-                        new RequestCapacity(worker, 1L, 3L, 1L));
+                        new WorkerAdmissionCapacity(worker, 1L, 1L, 1L),
+                        new WorkerAdmissionCapacity(worker, 1L, 2L, 0L),
+                        new WorkerAdmissionCapacity(worker, 1L, 3L, 1L));
         try {
             // Drive the planner directly without a periodic probe changing the capacity.
             RequestProtocolTestSupport.submitForManualPlacement(lifecycle, first);

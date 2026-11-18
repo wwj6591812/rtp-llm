@@ -3,7 +3,7 @@ package org.flexlb.balance.queue;
 import org.flexlb.balance.schedule.RequestContext;
 import org.flexlb.config.service.RoleType;
 import org.flexlb.worker.endpoint.CapacityKey;
-import org.flexlb.worker.endpoint.RequestCapacity;
+import org.flexlb.worker.endpoint.WorkerAdmissionCapacity;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -389,9 +389,9 @@ class CapacityWaitQueueTest {
         queue.capacityChanged(capacity(RoleType.PREFILL, "g", 1, revision, slots));
     }
 
-    private static RequestCapacity capacity(
+    private static WorkerAdmissionCapacity capacity(
             RoleType role, String group, long generation, long revision, long slots) {
-        return new RequestCapacity(
+        return new WorkerAdmissionCapacity(
                 CapacityKey.exact(role, group, "worker-" + generation),
                 generation,
                 revision,

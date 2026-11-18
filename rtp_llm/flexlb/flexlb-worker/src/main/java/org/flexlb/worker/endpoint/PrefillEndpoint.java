@@ -63,11 +63,11 @@ public class PrefillEndpoint extends WorkerEndpoint
         engineWaitingThreshold = queue == null ? null : queue.getWaitingThreshold();
     }
 
-    public RequestCapacity requestCapacity() {
+    public WorkerAdmissionCapacity requestCapacity() {
         stateLock().lock();
         try {
             var status = getStatus();
-            return new RequestCapacity(
+            return new WorkerAdmissionCapacity(
                     CapacityKey.exact(status.getRole(), status.getGroup(), ipPort()),
                     status.getGenerationId(),
                     resourceVersion,

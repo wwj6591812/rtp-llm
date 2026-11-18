@@ -14,8 +14,8 @@ import org.flexlb.worker.endpoint.CapacityKey;
 import org.flexlb.worker.endpoint.CapacityNotifier;
 import org.flexlb.worker.endpoint.CapacityNotifierTestSupport;
 import org.flexlb.worker.endpoint.PrefillEndpoint;
-import org.flexlb.worker.endpoint.RequestCapacity;
 import org.flexlb.worker.endpoint.StrategyErrorType;
+import org.flexlb.worker.endpoint.WorkerAdmissionCapacity;
 import org.flexlb.worker.endpoint.WorkerEndpoint;
 import org.flexlb.worker.status.ServerStatus;
 import org.flexlb.worker.status.WorkerStatus;
@@ -648,7 +648,7 @@ class RequestSchedulerTest {
                         call -> {
                             WorkerEndpoint worker = call.getArgument(0);
                             var status = worker.getStatus();
-                            return new RequestCapacity(
+                            return new WorkerAdmissionCapacity(
                                     CapacityKey.exact(
                                             status.getRole(), status.getGroup(), worker.ipPort()),
                                     status.getGenerationId(),
@@ -752,7 +752,7 @@ class RequestSchedulerTest {
                     .thenAnswer(
                             call ->
                                     List.of(
-                                            new RequestCapacity(
+                                            new WorkerAdmissionCapacity(
                                                     key,
                                                     1L,
                                                     System.nanoTime(),
@@ -761,7 +761,7 @@ class RequestSchedulerTest {
                             call -> {
                                 WorkerEndpoint worker = call.getArgument(0);
                                 var status = worker.getStatus();
-                                return new RequestCapacity(
+                                return new WorkerAdmissionCapacity(
                                         CapacityKey.exact(
                                                 status.getRole(),
                                                 status.getGroup(),

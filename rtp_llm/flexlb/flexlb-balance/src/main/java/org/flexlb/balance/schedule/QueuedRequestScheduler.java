@@ -14,8 +14,8 @@ import org.flexlb.config.FlexlbConfig;
 import org.flexlb.util.Failures;
 import org.flexlb.worker.endpoint.CapacityKey;
 import org.flexlb.worker.endpoint.CapacityNotifier;
-import org.flexlb.worker.endpoint.RequestCapacity;
 import org.flexlb.worker.endpoint.StrategyErrorType;
+import org.flexlb.worker.endpoint.WorkerAdmissionCapacity;
 
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
@@ -270,7 +270,9 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
                         nextCheck = now + capacityCheckIntervalNanos;
                     }
                     var capacities =
-                            periodicCheck ? capacitySnapshots() : List.<RequestCapacity>of();
+                            periodicCheck
+                                    ? capacitySnapshots()
+                                    : List.<WorkerAdmissionCapacity>of();
                     var ready = preemption.readyWork();
                     var waiting = preemption.waitingRequests();
                     boolean preemptionIdle = preemption.isIdle();
@@ -308,7 +310,7 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
         }
     }
 
-    private List<RequestCapacity> capacitySnapshots() {
+    private List<WorkerAdmissionCapacity> capacitySnapshots() {
         lock.lock();
         try {
             if (stopped || !waitingRequests.hasWaitingRequests()) return List.of();

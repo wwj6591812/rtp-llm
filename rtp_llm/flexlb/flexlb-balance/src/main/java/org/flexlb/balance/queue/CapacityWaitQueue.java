@@ -2,7 +2,7 @@ package org.flexlb.balance.queue;
 
 import org.flexlb.balance.schedule.RequestContext;
 import org.flexlb.worker.endpoint.CapacityKey;
-import org.flexlb.worker.endpoint.RequestCapacity;
+import org.flexlb.worker.endpoint.WorkerAdmissionCapacity;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -60,7 +60,7 @@ public final class CapacityWaitQueue {
     /**
      * Applies a newer worker budget and returns whether the scheduler should rescan.
      */
-    public boolean capacityChanged(RequestCapacity capacity) {
+    public boolean capacityChanged(WorkerAdmissionCapacity capacity) {
         var budget = workerBudgets.get(capacity.generation());
         if (budget != null && capacity.revision() <= budget.workerCapacityRevision) return false;
         if (budget == null) {
@@ -86,7 +86,7 @@ public final class CapacityWaitQueue {
      * Refreshes local capacity and permits one control check per full role/group for preemption.
      * The control check is not an Engine admission slot. Worker budgets remain shared across groups.
      */
-    public void checkCapacity(List<RequestCapacity> capacities) {
+    public void checkCapacity(List<WorkerAdmissionCapacity> capacities) {
         var currentWorkers = new HashSet<Long>();
         for (var capacity : capacities) {
             long generation = capacity.generation();
@@ -244,7 +244,7 @@ public final class CapacityWaitQueue {
         private long budgetRound;
         private int unfinishedRetries;
 
-        private void refreshWorker(RequestCapacity observation) {
+        private void refreshWorker(WorkerAdmissionCapacity observation) {
             var key = observation.key();
             if (workerRoleAndGroup == null
                     || workerRoleAndGroup.role() != key.role()

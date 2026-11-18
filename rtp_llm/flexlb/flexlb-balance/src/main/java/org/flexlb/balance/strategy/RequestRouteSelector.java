@@ -13,8 +13,8 @@ import org.flexlb.util.Failures;
 import org.flexlb.util.Logger;
 import org.flexlb.worker.endpoint.CapacityKey;
 import org.flexlb.worker.endpoint.EndpointRegistry;
-import org.flexlb.worker.endpoint.RequestCapacity;
 import org.flexlb.worker.endpoint.StrategyErrorType;
+import org.flexlb.worker.endpoint.WorkerAdmissionCapacity;
 import org.flexlb.worker.endpoint.WorkerEndpoint;
 import org.flexlb.worker.status.ServerStatus;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -55,15 +55,15 @@ public class RequestRouteSelector {
                         Objects.requireNonNull(modelMetaConfig, "modelMetaConfig").requiredRoles());
     }
 
-    public List<RequestCapacity> requestCapacities() {
-        var result = new ArrayList<RequestCapacity>();
+    public List<WorkerAdmissionCapacity> requestCapacities() {
+        var result = new ArrayList<WorkerAdmissionCapacity>();
         for (var role : requiredRoles)
             for (var endpoint : endpoints.<WorkerEndpoint>endpoints(role, null))
                 result.add(requestCapacity(endpoint));
         return result;
     }
 
-    public RequestCapacity requestCapacity(WorkerEndpoint endpoint) {
+    public WorkerAdmissionCapacity requestCapacity(WorkerEndpoint endpoint) {
         if (endpoint instanceof org.flexlb.worker.endpoint.PrefillEndpoint prefill)
             return prefill.requestCapacity();
         if (endpoint instanceof org.flexlb.worker.endpoint.DecodeEndpoint decode)
@@ -72,7 +72,7 @@ public class RequestRouteSelector {
             return encoderStrategy.requestCapacity(encoder);
         var status = endpoint.getStatus();
         // VIT has no local request-count reservation; permit one availability probe.
-        return new RequestCapacity(
+        return new WorkerAdmissionCapacity(
                 CapacityKey.exact(status.getRole(), status.getGroup(), endpoint.ipPort()),
                 status.getGenerationId(),
                 status.committedWorkerStatus().cursor().statusVersion(),

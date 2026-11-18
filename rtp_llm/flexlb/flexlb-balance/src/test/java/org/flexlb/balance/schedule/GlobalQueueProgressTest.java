@@ -16,7 +16,7 @@ import org.flexlb.worker.endpoint.CapacityNotifierTestSupport;
 import org.flexlb.worker.endpoint.DecodeEndpoint;
 import org.flexlb.worker.endpoint.DecodeResources;
 import org.flexlb.worker.endpoint.PrefillEndpoint;
-import org.flexlb.worker.endpoint.RequestCapacity;
+import org.flexlb.worker.endpoint.WorkerAdmissionCapacity;
 import org.flexlb.worker.endpoint.WorkerEndpoint;
 import org.flexlb.worker.status.ServerStatus;
 import org.flexlb.worker.status.WorkerStatus;
@@ -1234,10 +1234,10 @@ class GlobalQueueProgressTest {
                     .thenAnswer(
                             call -> {
                                 var observed = new java.util.HashSet<String>(groups.values());
-                                var result = new java.util.ArrayList<RequestCapacity>();
+                                var result = new java.util.ArrayList<WorkerAdmissionCapacity>();
                                 for (var group : observed)
                                     result.add(
-                                            new RequestCapacity(
+                                            new WorkerAdmissionCapacity(
                                                     CapacityKey.exact(
                                                             role,
                                                             group,
@@ -1255,7 +1255,7 @@ class GlobalQueueProgressTest {
                             call -> {
                                 WorkerEndpoint endpoint = call.getArgument(0);
                                 var status = endpoint.getStatus();
-                                return new RequestCapacity(
+                                return new WorkerAdmissionCapacity(
                                         CapacityKey.exact(
                                                 status.getRole(),
                                                 status.getGroup(),
