@@ -1,92 +1,85 @@
 package org.flexlb.balance.queue;
 
 import org.flexlb.balance.schedule.RequestContext;
-import org.flexlb.config.service.RoleType;
 import org.flexlb.worker.endpoint.CapacityKey;
 import org.flexlb.worker.endpoint.RequestCapacity;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.NavigableSet;
 import java.util.Set;
-import java.util.TreeSet;
-import java.util.function.Consumer;
-import java.util.function.Predicate;
 
 /**
- * Pauses requests by role/group and resumes ordered batches within shared worker capacity.
- * Notifications use request-level hints and periodic capacity checks permit fresh selection;
+ * Tracks capacity waits by role/group and charges retries when the scheduler creates a task.
+ * The scheduling queue owns ordering. Notifications and periodic checks update retry eligibility;
  * failed retries and newly parked requests wait for the next finite pass.
- * The scheduler lock protects every operation; retry budgets do not reserve Engine resources.
+ * All operations run under the scheduler lock.
  */
 public final class CapacityWaitQueue {
-    private final Comparator<RequestContext> order;
     private final Map<CapacityKey, Domain> domains = new HashMap<>();
     private final Map<RequestContext, Waiter> membership = new IdentityHashMap<>();
-    private final NavigableSet<RequestContext> ready;
-    private final Map<WorkerKey, Budget> workerBudgets = new HashMap<>();
-    private final Map<CapacityKey, Budget> controlChecks = new HashMap<>();
+    // Worker generation IDs are unique across roles within this process.
+    private final Map<Long, RetryBudget> workerBudgets = new HashMap<>();
 
-    public CapacityWaitQueue(Comparator<RequestContext> order) {
-        this.order = order;
-        ready = new TreeSet<>(order);
-    }
-
-    public boolean isWaiting(RequestContext request) {
-        var waiter = membership.get(request);
-        return waiter != null && waiter.budget == null;
-    }
-
-    public void park(RequestContext request, CapacityKey blocker, Set<Long> candidateGenerations) {
-        var candidates = Set.copyOf(candidateGenerations);
+    /**
+     * Joins the next pass for the latest blocker. Returns true if a newer budget reopened the pass.
+     */
+    public boolean park(
+            RequestContext request, CapacityKey blocker, Set<Long> candidateGenerations) {
         var key = blocker.waitingDomain();
         var waiter = membership.get(request);
         if (waiter == null || !waiter.domain.key.equals(key)) {
             remove(request);
             waiter = new Waiter(domains.computeIfAbsent(key, Domain::new));
             membership.put(request, waiter);
+            waiter.candidateGenerations = Set.copyOf(candidateGenerations);
+            waiter.domain.deferred.add(request);
+            return false;
         }
-        var domain = waiter.domain;
-        ready.remove(request);
-        boolean changedDuringRetry = finishRetry(waiter, true);
-        waiter.candidateGenerations = candidates;
-        domain.entries.remove(request);
-        domain.deferred.add(request);
-        if (changedDuringRetry) reopen(domain);
+        waiter.candidateGenerations = Set.copyOf(candidateGenerations);
+        return defer(request, waiter);
     }
 
     public void remove(RequestContext request) {
         var waiter = membership.remove(request);
         if (waiter == null) return;
         var domain = waiter.domain;
-        ready.remove(request);
-        finishRetry(waiter, false);
-        domain.entries.remove(request);
-        domain.deferred.remove(request);
-        removeEmptyDomain(domain);
+        if (waiter.budget != null) {
+            finishRetry(waiter, false);
+        } else if (!domain.deferred.remove(request)) {
+            domain.currentPassCount--;
+        }
+        if (domain.currentPassCount == 0
+                && domain.deferred.isEmpty()
+                && domain.unfinishedRetries == 0) domains.remove(domain.key, domain);
     }
 
-    public void capacityChanged(RequestCapacity capacity) {
-        var id = new WorkerKey(capacity.key().role(), capacity.generation());
-        var budget = workerBudgets.get(id);
-        if (budget != null && capacity.revision() <= budget.revision) return;
+    /**
+     * Applies a newer worker budget and returns whether the scheduler should rescan.
+     */
+    public boolean capacityChanged(RequestCapacity capacity) {
+        var budget = workerBudgets.get(capacity.generation());
+        if (budget != null && capacity.revision() <= budget.workerCapacityRevision) return false;
         if (budget == null) {
-            budget = new Budget(capacity.key());
-            workerBudgets.put(id, budget);
+            budget = new RetryBudget();
+            workerBudgets.put(capacity.generation(), budget);
         }
-        budget.key = capacity.key();
-        budget.revision = capacity.revision();
-        budget.refresh(capacity.availableRequests(), false);
+        budget.refreshWorker(capacity);
+        boolean rescan = false;
         for (var domain : domains.values()) {
-            if (!budget.matches(domain.key)) continue;
-            domain.budgets.removeIf(candidate -> candidate.key.endpoint() == null);
-            if (!domain.budgets.contains(budget)) domain.budgets.add(budget);
-            reopen(domain);
+            if (!budget.matches(domain.key)) {
+                domain.workers.remove(budget);
+                continue;
+            }
+            if (!domain.workers.contains(budget)) domain.workers.add(budget);
+            if (domain.controlCheck != null && budget.retryLimit > 0L)
+                domain.controlCheck.retryLimit = 0L;
+            rescan |= reopen(domain) || (budget.hasRetrySlots() && domain.currentPassCount > 0);
         }
+        return rescan;
     }
 
     /**
@@ -94,40 +87,31 @@ public final class CapacityWaitQueue {
      * The control check is not an Engine admission slot. Worker budgets remain shared across groups.
      */
     public void checkCapacity(List<RequestCapacity> capacities) {
-        var currentWorkers = new java.util.HashSet<WorkerKey>();
+        var currentWorkers = new HashSet<Long>();
         for (var capacity : capacities) {
-            var id = new WorkerKey(capacity.key().role(), capacity.generation());
-            currentWorkers.add(id);
-            var budget = workerBudgets.computeIfAbsent(id, ignored -> new Budget(capacity.key()));
-            if (capacity.revision() < budget.revision) continue;
-            budget.key = capacity.key();
-            budget.revision = capacity.revision();
-            budget.refresh(capacity.availableRequests(), true);
+            long generation = capacity.generation();
+            currentWorkers.add(generation);
+            var budget = workerBudgets.computeIfAbsent(generation, ignored -> new RetryBudget());
+            if (capacity.revision() >= budget.workerCapacityRevision)
+                budget.refreshWorker(capacity);
         }
-        for (var entry : workerBudgets.entrySet())
-            if (!currentWorkers.contains(entry.getKey())) entry.getValue().refresh(0L, false);
         workerBudgets
                 .entrySet()
                 .removeIf(
-                        entry ->
-                                !currentWorkers.contains(entry.getKey())
-                                        && entry.getValue().inFlight == 0);
-        controlChecks.entrySet().removeIf(entry -> entry.getValue().inFlight == 0);
-        for (var budget : controlChecks.values()) budget.refresh(1L, true);
+                        entry -> {
+                            if (currentWorkers.contains(entry.getKey())) return false;
+                            var budget = entry.getValue();
+                            if (budget.unfinishedRetries == 0) return true;
+                            budget.refresh(0L);
+                            return false;
+                        });
         for (var domain : domains.values()) {
-            domain.budgets.clear();
+            domain.workers.clear();
             for (var budget : workerBudgets.values())
-                if (budget.matches(domain.key)) domain.budgets.add(budget);
-            if (domain.budgets.stream().noneMatch(budget -> budget.capacity > 0L)) {
-                domain.budgets.add(
-                        controlChecks.computeIfAbsent(
-                                domain.key,
-                                key -> {
-                                    var budget = new Budget(key);
-                                    budget.refresh(1L, true);
-                                    return budget;
-                                }));
-            }
+                if (budget.matches(domain.key)) domain.workers.add(budget);
+            boolean full = domain.workers.stream().noneMatch(budget -> budget.retryLimit > 0L);
+            if (full && domain.controlCheck == null) domain.controlCheck = new RetryBudget();
+            if (domain.controlCheck != null) domain.controlCheck.refresh(full ? 1L : 0L);
             reopen(domain);
         }
     }
@@ -136,107 +120,96 @@ public final class CapacityWaitQueue {
         return !domains.isEmpty();
     }
 
-    public boolean hasReadyRequests() {
-        return !ready.isEmpty();
+    /**
+     * Tests eligibility during the existing ordered scan without charging a budget.
+     */
+    public boolean canSchedule(RequestContext request) {
+        var waiter = membership.get(request);
+        return waiter == null || availableBudget(request, waiter) != null;
     }
 
-    public void resumeReady(
-            int limit, Predicate<RequestContext> canRun, Consumer<RequestContext> resume) {
-        var available = new HashMap<Domain, Budget>();
-        var periodic = new HashMap<Domain, Budget>();
-        var iterator = ready.iterator();
-        for (int count = 0; count < limit && iterator.hasNext(); ) {
-            var request = iterator.next();
-            if (!canRun.test(request)) continue;
-            var waiter = membership.get(request);
-            var domain = waiter.domain;
-            var budget = matchingBudget(waiter);
-            if (budget == null) {
-                boolean restricted = !waiter.candidateGenerations.isEmpty();
-                budget = availableBudget(domain, restricted ? periodic : available, restricted);
-            }
-            if (budget == null) continue;
-            iterator.remove();
-            domain.entries.remove(request);
-            budget.spent++;
-            budget.inFlight++;
-            domain.inFlight++;
-            waiter.budget = budget;
-            waiter.epoch = budget.epoch;
-            resume.accept(request);
-            count++;
-        }
+    /**
+     * Charges one retry after ordering selects the request and before the task is recorded.
+     */
+    public boolean tryStartRetry(RequestContext request) {
+        var waiter = membership.get(request);
+        if (waiter == null) return true;
+        var budget = availableBudget(request, waiter);
+        if (budget == null) return false;
+        waiter.domain.currentPassCount--;
+        waiter.domain.unfinishedRetries++;
+        budget.chargedRetries++;
+        budget.unfinishedRetries++;
+        waiter.budget = budget;
+        waiter.budgetRoundAtDispatch = budget.budgetRound;
+        return true;
+    }
+
+    /**
+     * Settles an attempt that ended without removing the request or reporting a new blocker.
+     */
+    public boolean retry(RequestContext request) {
+        var waiter = membership.get(request);
+        return waiter != null && waiter.budget != null && defer(request, waiter);
     }
 
     public void clear() {
         domains.clear();
-        ready.clear();
         membership.clear();
         workerBudgets.clear();
-        controlChecks.clear();
     }
 
-    private Budget availableBudget(Domain domain, Map<Domain, Budget> cache, boolean periodicOnly) {
-        var cached = cache.get(domain);
-        if (cache.containsKey(domain) && (cached == null || cached.remaining() > 0L)) return cached;
-        for (var budget : domain.budgets) {
-            if ((!periodicOnly || budget.periodic)
-                    && budget.matches(domain.key)
-                    && budget.remaining() > 0L) {
-                cache.put(domain, budget);
-                return budget;
-            }
+    private boolean defer(RequestContext request, Waiter waiter) {
+        if (!waiter.domain.deferred.add(request)) return false;
+        if (waiter.budget == null) {
+            waiter.domain.currentPassCount--;
+            return false;
         }
-        cache.put(domain, null);
-        return null;
+        return finishRetry(waiter, true) && reopen(waiter.domain);
     }
 
-    private Budget matchingBudget(Waiter waiter) {
-        var key = waiter.domain.key;
-        for (long generation : waiter.candidateGenerations) {
-            var budget = workerBudgets.get(new WorkerKey(key.role(), generation));
-            if (budget != null && budget.matches(key) && budget.remaining() > 0L) return budget;
-        }
-        return null;
-    }
-
-    private boolean finishRetry(Waiter waiter, boolean capacityMiss) {
+    private boolean finishRetry(Waiter waiter, boolean retryDidNotAcquireCapacity) {
         var budget = waiter.budget;
-        if (budget == null) return false;
-        budget.inFlight--;
-        waiter.domain.inFlight--;
-        boolean refreshed = waiter.epoch != budget.epoch;
-        if (refreshed) {
-            budget.oldInFlight--;
-            if (!capacityMiss) budget.spent++;
-        }
+        budget.unfinishedRetries--;
+        waiter.domain.unfinishedRetries--;
+        boolean refreshedSinceDispatch = waiter.budgetRoundAtDispatch != budget.budgetRound;
+        if (refreshedSinceDispatch && retryDidNotAcquireCapacity) budget.chargedRetries--;
         waiter.budget = null;
-        return refreshed;
+        return refreshedSinceDispatch;
     }
 
-    private void reopen(Domain domain) {
-        if (domain.entries.isEmpty()) {
-            var previous = domain.entries;
-            domain.entries = domain.deferred;
-            domain.deferred = previous;
-            ready.addAll(domain.entries);
+    private boolean reopen(Domain domain) {
+        if (domain.currentPassCount != 0 || domain.deferred.isEmpty()) return false;
+        domain.currentPassCount = domain.deferred.size();
+        domain.deferred.clear();
+        return true;
+    }
+
+    private RetryBudget availableBudget(RequestContext request, Waiter waiter) {
+        var domain = waiter.domain;
+        if (waiter.budget != null || domain.deferred.contains(request)) return null;
+        for (long generation : waiter.candidateGenerations) {
+            var budget = workerBudgets.get(generation);
+            if (budget != null && budget.matches(domain.key) && budget.hasRetrySlots())
+                return budget;
         }
-    }
-
-    private void removeEmptyDomain(Domain domain) {
-        if (domain.entries.isEmpty() && domain.deferred.isEmpty() && domain.inFlight == 0)
-            domains.remove(domain.key, domain);
+        for (var budget : domain.workers) if (budget.hasRetrySlots()) return budget;
+        return domain.controlCheck != null && domain.controlCheck.hasRetrySlots()
+                ? domain.controlCheck
+                : null;
     }
 
     /**
-     * Keeps one finite ordered pass and the requests waiting for the next pass in a role/group.
+     * Keeps the retry pass and the capacity sources for one role/group.
      */
-    private final class Domain {
+    private static final class Domain {
         private final CapacityKey key;
-        private final List<Budget> budgets = new ArrayList<>();
-        private NavigableSet<RequestContext> entries = new TreeSet<>(order);
-        private NavigableSet<RequestContext> deferred = new TreeSet<>(order);
-        private int inFlight;
+        private final List<RetryBudget> workers = new ArrayList<>();
+        private final Set<RequestContext> deferred = new HashSet<>();
+        private RetryBudget controlCheck;
+
+        private int currentPassCount;
+        private int unfinishedRetries;
 
         private Domain(CapacityKey key) {
             this.key = key;
@@ -248,8 +221,8 @@ public final class CapacityWaitQueue {
      */
     private static final class Waiter {
         private final Domain domain;
-        private Budget budget;
-        private long epoch;
+        private RetryBudget budget;
+        private long budgetRoundAtDispatch;
         private Set<Long> candidateGenerations = Set.of();
 
         private Waiter(Domain domain) {
@@ -257,41 +230,45 @@ public final class CapacityWaitQueue {
         }
     }
 
-    private record WorkerKey(RoleType role, long generation) {}
-
     /**
-     * Shares one worker's scheduling budget across all eligible groups.
-     * Completion never replenishes spent retries; refreshed snapshots account for pending attempts.
+     * Counts retries granted by a worker snapshot or a group probe.
+     * A refresh starts a new round even if the worker revision did not change.
+     * Unfinished retries count against the new round until their outcome is known.
      */
-    private static final class Budget {
-        private CapacityKey key;
-        private long revision = -1L;
-        private long capacity;
-        private long spent;
-        private long epoch;
-        private boolean periodic;
-        private int oldInFlight;
-        private int inFlight;
+    private static final class RetryBudget {
+        // Set only for worker budgets. Domain probes cannot participate in worker matching.
+        private CapacityKey workerRoleAndGroup;
+        private long workerCapacityRevision = -1L;
+        private long retryLimit;
+        private long chargedRetries;
+        private long budgetRound;
+        private int unfinishedRetries;
 
-        private Budget(CapacityKey key) {
-            this.key = key;
+        private void refreshWorker(RequestCapacity observation) {
+            var key = observation.key();
+            if (workerRoleAndGroup == null
+                    || workerRoleAndGroup.role() != key.role()
+                    || !java.util.Objects.equals(workerRoleAndGroup.group(), key.group())) {
+                workerRoleAndGroup = key.waitingDomain();
+            }
+            workerCapacityRevision = observation.revision();
+            refresh(observation.availableRequests());
         }
 
-        private void refresh(long available, boolean periodicCheck) {
-            periodic = periodicCheck;
-            capacity = available;
-            spent = 0L;
-            oldInFlight = inFlight;
-            epoch++;
+        private void refresh(long retryLimit) {
+            this.retryLimit = retryLimit;
+            chargedRetries = unfinishedRetries;
+            budgetRound++;
         }
 
-        private long remaining() {
-            return Math.max(0L, capacity - spent - oldInFlight);
+        private boolean hasRetrySlots() {
+            return retryLimit > chargedRetries;
         }
 
         private boolean matches(CapacityKey waiter) {
-            return key.role() == waiter.role()
-                    && (waiter.group() == null || waiter.group().equals(key.group()));
+            return workerRoleAndGroup.role() == waiter.role()
+                    && (waiter.group() == null
+                            || waiter.group().equals(workerRoleAndGroup.group()));
         }
     }
 }

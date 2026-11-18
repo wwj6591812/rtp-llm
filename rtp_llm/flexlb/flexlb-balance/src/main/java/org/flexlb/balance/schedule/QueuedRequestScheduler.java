@@ -82,7 +82,7 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
         this.router = router;
         this.preemption = preemption;
         this.orderedQueue = queue;
-        this.waitingRequests = new CapacityWaitQueue(queue.order());
+        this.waitingRequests = new CapacityWaitQueue();
         this.capacityListener =
                 endpoint -> {
                     preemption.requestCheck(endpoint);
@@ -90,7 +90,7 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
                     lock.lock();
                     try {
                         if (stopped) return;
-                        waitingRequests.capacityChanged(capacity);
+                        if (waitingRequests.capacityChanged(capacity)) orderedQueue.beginScan();
                         changed.signal();
                     } finally {
                         lock.unlock();
@@ -349,8 +349,6 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
         }
         int remaining = slots - tasks.size();
         if (!stopped && remaining > 0) {
-            waitingRequests.resumeReady(
-                    remaining, request -> !executing.containsKey(request), orderedQueue::retry);
             var candidates =
                     orderedQueue.scanForPlanningCandidates(
                             remaining,
@@ -361,10 +359,14 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
                             request ->
                                     !executing.containsKey(request)
                                             && !waiting.contains(request)
-                                            && !waitingRequests.isWaiting(request));
+                                            && waitingRequests.canSchedule(request));
             // Finish the budgeted scan before assigning the sole free slot to another refresh.
             if (!orderedQueue.hasUnscannedRequests()) refreshBeforePlanning = true;
             for (var request : candidates) {
+                if (!waitingRequests.tryStartRetry(request)) {
+                    orderedQueue.retry(request);
+                    continue;
+                }
                 var task = new SchedulingTask(request, null, null);
                 executing.put(request, task);
                 if (tasks.isEmpty()) tasks = new ArrayList<>(candidates.size());
@@ -427,10 +429,9 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
             lock.lock();
             try {
                 executing.remove(task.request, task);
+                if (waitingRequests.retry(task.request)) orderedQueue.beginScan();
                 orderedQueue.retry(task.request);
-                if (stopped
-                        || orderedQueue.hasUnscannedRequests()
-                        || waitingRequests.hasReadyRequests()) changed.signal();
+                if (stopped || orderedQueue.hasUnscannedRequests()) changed.signal();
             } finally {
                 lock.unlock();
             }
@@ -527,9 +528,11 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
             case BLOCKED -> {
                 lock.lock();
                 try {
-                    if (!stopped && orderedQueue.contains(request))
-                        waitingRequests.park(
-                                request, result.blocker(), result.candidateGenerations());
+                    if (!stopped
+                            && orderedQueue.contains(request)
+                            && waitingRequests.park(
+                                    request, result.blocker(), result.candidateGenerations()))
+                        orderedQueue.beginScan();
                 } finally {
                     lock.unlock();
                 }

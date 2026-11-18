@@ -2,10 +2,15 @@ package org.flexlb.balance.schedule;
 
 import org.flexlb.balance.metrics.DeliveryMetricsReporter;
 import org.flexlb.balance.metrics.RequestSchedulerReporter;
+import org.flexlb.balance.queue.CapacityWaitQueue;
 import org.flexlb.balance.queue.OrderedRequestQueue;
 import org.flexlb.balance.queue.SchedulingQueue;
 import org.flexlb.balance.requestlog.TheoryCacheHitReporter;
+import org.flexlb.balance.strategy.RequestRouteSelector;
 import org.flexlb.config.service.RoleType;
+import org.flexlb.worker.endpoint.CapacityKey;
+import org.flexlb.worker.endpoint.CapacityNotifier;
+import org.flexlb.worker.endpoint.RequestCapacity;
 import org.flexlb.worker.endpoint.WorkerEndpoint;
 import org.flexlb.worker.status.WorkerStatus;
 import org.junit.jupiter.api.Test;
@@ -13,6 +18,8 @@ import org.junit.jupiter.api.Timeout;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -26,7 +33,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * Checks restored requests keep one ordered queue entry and their original sequence.
+ * Checks how the scheduler selects tasks, restores requests and handles wakeups and shutdown.
  */
 class SchedulerExecutionTest {
     @Test
@@ -48,6 +55,54 @@ class SchedulerExecutionTest {
             assertEquals(originalSequence, first.getPlacementSequence());
             assertEquals(
                     List.of(first, second), queue.scanForPlanningCandidates(2, 2, entry -> true));
+        } finally {
+            SchedulerTestSupport.shutdown(SchedulerTestSupport.runtime(lifecycle));
+        }
+    }
+
+    @Test
+    void capacityWaiterCannotUseAnOldSlotWhenItWasNotScheduled() {
+        var lifecycle = owner();
+        var scheduler = (QueuedRequestScheduler) SchedulerTestServices.scheduler(lifecycle);
+        ReflectionTestUtils.setField(scheduler, "plannerCount", 1);
+        var waiting =
+                (CapacityWaitQueue) ReflectionTestUtils.getField(scheduler, "waitingRequests");
+        var executing = (Map<?, ?>) ReflectionTestUtils.getField(scheduler, "executing");
+        var first = RequestProtocolTestSupport.context(SchedulingTestConfig.newConfig(), 99020L);
+        var waiter = RequestProtocolTestSupport.context(SchedulingTestConfig.newConfig(), 99021L);
+        var worker = CapacityKey.exact(RoleType.PREFILL, "g", "worker-a");
+        var endpoint = endpoint();
+        var notifications =
+                (CapacityNotifier) ReflectionTestUtils.getField(scheduler, "capacityNotifier");
+        var router = mock(RequestRouteSelector.class);
+        ReflectionTestUtils.setField(scheduler, "router", router);
+        when(router.requestCapacity(endpoint))
+                .thenReturn(
+                        new RequestCapacity(worker, 1L, 1L, 1L),
+                        new RequestCapacity(worker, 1L, 2L, 0L),
+                        new RequestCapacity(worker, 1L, 3L, 1L));
+        try {
+            // Drive the planner directly without a periodic probe changing the capacity.
+            RequestProtocolTestSupport.submitForManualPlacement(lifecycle, first);
+            RequestProtocolTestSupport.submitForManualPlacement(lifecycle, waiter);
+            scheduler.scheduleRequest(first);
+            scheduler.scheduleRequest(waiter);
+            waiting.park(waiter, worker, Set.of());
+            notifications.notifyChanged(endpoint);
+
+            ReflectionTestUtils.invokeMethod(scheduler, "chooseTasks", List.of(), Set.of());
+            assertEquals(Set.of(first), executing.keySet(), "the FIFO head takes the only planner");
+
+            notifications.notifyChanged(endpoint);
+            scheduler.removeRequest(first);
+            executing.remove(first);
+            List<?> next =
+                    ReflectionTestUtils.invokeMethod(scheduler, "chooseTasks", List.of(), Set.of());
+            assertEquals(List.of(), next, "an unused retry slot must not survive its withdrawal");
+
+            notifications.notifyChanged(endpoint);
+            ReflectionTestUtils.invokeMethod(scheduler, "chooseTasks", List.of(), Set.of());
+            assertEquals(Set.of(waiter), executing.keySet(), "fresh capacity lets the waiter run");
         } finally {
             SchedulerTestSupport.shutdown(SchedulerTestSupport.runtime(lifecycle));
         }

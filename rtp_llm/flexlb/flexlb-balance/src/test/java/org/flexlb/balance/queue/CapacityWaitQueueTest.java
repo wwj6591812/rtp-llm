@@ -7,8 +7,8 @@ import org.flexlb.worker.endpoint.RequestCapacity;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -20,32 +20,35 @@ import static org.mockito.Mockito.when;
  * Checks group retry batches, shared capacity, scan progress and notifications during a retry.
  */
 class CapacityWaitQueueTest {
-    private final CapacityWaitQueue queue =
-            new CapacityWaitQueue(Comparator.comparingLong(RequestContext::getPlacementSequence));
+    private final CapacityWaitQueue queue = new CapacityWaitQueue();
+    private final OrderedRequestQueue ordered = new OrderedRequestQueue(false, false);
     private final CapacityKey group = new CapacityKey(RoleType.PREFILL, "g", null);
 
     @Test
-    void workerNotificationSelectsItsHintedWaiterWithinTheSameGroup() {
+    void workerNotificationCanRetryAnOlderRequestWithAStaleHint() {
         var first = request(1);
         var second = request(2);
-        queue.park(first, group, java.util.Set.of(1L));
-        queue.park(second, group, java.util.Set.of(2L));
+        park(first, group, Set.of(1L));
+        park(second, group, Set.of(2L));
+
         queue.capacityChanged(capacity(RoleType.PREFILL, "g", 2, 1, 1));
-        assertEquals(List.of(second), resume(10));
-        assertTrue(queue.isWaiting(first));
-        changed(1, 1);
+
         assertEquals(List.of(first), resume(10));
+        assertFalse(queue.canSchedule(second), "both waiters share the one slot");
+        remove(first);
+        queue.capacityChanged(capacity(RoleType.PREFILL, "g", 2, 2, 1));
+        assertEquals(List.of(second), resume(10));
     }
 
     @Test
     void overlappingHintsShareOneWorkerBudgetWithoutCreatingWaitingDomains() {
         var first = request(1);
         var second = request(2);
-        queue.park(first, group, java.util.Set.of(1L));
-        queue.park(second, group, java.util.Set.of(1L, 2L));
+        park(first, group, java.util.Set.of(1L));
+        park(second, group, java.util.Set.of(1L, 2L));
         changed(1, 1);
         assertEquals(List.of(first), resume(10));
-        queue.remove(first);
+        remove(first);
         changed(1, 1);
         assertTrue(resume(10).isEmpty());
         changed(2, 1);
@@ -53,28 +56,35 @@ class CapacityWaitQueueTest {
     }
 
     @Test
-    void aFailedRetryReplacesItsPreviousHints() {
+    void aFailedRetryUsesItsNewHintBeforeOtherCapacity() {
         var first = request(1);
-        queue.park(first, group, java.util.Set.of(1L));
+        var second = request(2);
+        var anyGroup = new CapacityKey(RoleType.PREFILL, null, null);
+        park(first, anyGroup, Set.of(1L));
         changed(1, 1);
         assertEquals(List.of(first), resume(10));
-        queue.park(first, group, java.util.Set.of(2L));
+
+        park(first, anyGroup, Set.of(2L));
+        park(second, group, Set.of(1L));
         changed(2, 1);
-        assertTrue(resume(10).isEmpty(), "the old hint must not match a new notification");
-        queue.capacityChanged(capacity(RoleType.PREFILL, "g", 2, 1, 1));
-        assertEquals(List.of(first), resume(10));
+        queue.capacityChanged(capacity(RoleType.PREFILL, "other", 2, 1, 1));
+
+        assertEquals(
+                List.of(first, second),
+                resume(10),
+                "the first request should use its new hint and leave the only g slot");
     }
 
     @Test
     void periodicProbeCanReconsiderAStaleHintBeforeMatchedTrafficSpendsEverySlot() {
         var stale = request(1);
         var matching = request(2);
-        queue.park(stale, group, java.util.Set.of(1L));
-        queue.park(matching, group, java.util.Set.of(2L));
+        park(stale, group, java.util.Set.of(1L));
+        park(matching, group, java.util.Set.of(2L));
         var available = capacity(RoleType.PREFILL, "g", 2, 1, 1);
         queue.checkCapacity(List.of(available));
         assertEquals(List.of(stale), resume(10));
-        queue.park(stale, group, java.util.Set.of(2L));
+        park(stale, group, java.util.Set.of(2L));
         assertTrue(resume(10).isEmpty());
         queue.checkCapacity(List.of(available));
         assertEquals(
@@ -87,26 +97,25 @@ class CapacityWaitQueueTest {
     void unusedPeriodicCapacityCanReconsiderMultipleStaleHints() {
         var first = request(1);
         var second = request(2);
-        queue.park(first, group, java.util.Set.of(1L));
-        queue.park(second, group, java.util.Set.of(2L));
+        park(first, group, java.util.Set.of(1L));
+        park(second, group, java.util.Set.of(2L));
         queue.checkCapacity(List.of(capacity(RoleType.PREFILL, "g", 3, 1, 2)));
         assertEquals(List.of(first, second), resume(10));
         assertTrue(resume(10).isEmpty());
     }
 
     @Test
-    void hintMatchingPreservesOrderAcrossGroupsWhenAHeadHasNoMatchingCapacity() {
+    void orderedScanSkipsWaiterWithoutCapacityInItsGroup() {
         var blocked = request(1);
         var otherGroup = request(2);
         var sameGroup = request(3);
-        queue.park(blocked, group, java.util.Set.of(1L));
-        queue.park(sameGroup, group, java.util.Set.of(2L));
-        queue.park(
-                otherGroup, new CapacityKey(RoleType.PREFILL, "other", null), java.util.Set.of(3L));
+        park(blocked, new CapacityKey(RoleType.PREFILL, "blocked", null), Set.of(1L));
+        park(sameGroup, group, java.util.Set.of(2L));
+        park(otherGroup, new CapacityKey(RoleType.PREFILL, "other", null), java.util.Set.of(3L));
         queue.capacityChanged(capacity(RoleType.PREFILL, "g", 2, 1, 1));
         queue.capacityChanged(capacity(RoleType.PREFILL, "other", 3, 1, 1));
         assertEquals(List.of(otherGroup, sameGroup), resume(10));
-        assertTrue(queue.isWaiting(blocked));
+        assertFalse(queue.canSchedule(blocked));
     }
 
     @Test
@@ -114,15 +123,15 @@ class CapacityWaitQueueTest {
         var first = request(1);
         var second = request(2);
         var arriving = request(3);
-        queue.park(first, group, java.util.Set.of());
-        queue.park(second, group, java.util.Set.of());
+        park(first, group, java.util.Set.of());
+        park(second, group, java.util.Set.of());
         changed(1, 1);
         assertEquals(List.of(first), resume(10));
-        queue.park(first, group, java.util.Set.of());
-        queue.park(arriving, group, java.util.Set.of());
+        park(first, group, java.util.Set.of());
+        park(arriving, group, java.util.Set.of());
         changed(2, 1);
         assertEquals(List.of(second), resume(10));
-        queue.park(second, group, java.util.Set.of());
+        park(second, group, java.util.Set.of());
         changed(3, 1);
         assertEquals(
                 List.of(first),
@@ -135,22 +144,22 @@ class CapacityWaitQueueTest {
         var first = request(1);
         var second = request(2);
         var third = request(3);
-        queue.park(third, group, java.util.Set.of());
-        queue.park(first, group, java.util.Set.of());
-        queue.park(second, group, java.util.Set.of());
+        park(third, group, java.util.Set.of());
+        park(first, group, java.util.Set.of());
+        park(second, group, java.util.Set.of());
         assertTrue(resume(10).isEmpty());
         changed(1, 2);
         assertEquals(List.of(first, second), resume(10));
-        assertFalse(queue.isWaiting(first));
-        assertFalse(queue.isWaiting(second));
-        assertTrue(queue.isWaiting(third));
+        assertFalse(queue.canSchedule(first));
+        assertFalse(queue.canSchedule(second));
+        assertFalse(queue.canSchedule(third));
         assertTrue(resume(10).isEmpty());
-        queue.remove(first);
-        queue.remove(second);
+        remove(first);
+        remove(second);
         assertTrue(resume(10).isEmpty(), "completion does not replenish the budget");
         changed(2, 1);
         assertEquals(List.of(third), resume(10));
-        queue.remove(third);
+        remove(third);
         assertFalse(queue.hasWaitingRequests());
     }
 
@@ -159,14 +168,14 @@ class CapacityWaitQueueTest {
         var first = request(1);
         var second = request(2);
         var third = request(3);
-        queue.park(first, group, java.util.Set.of());
-        queue.park(second, group, java.util.Set.of());
-        queue.park(third, group, java.util.Set.of());
+        park(first, group, java.util.Set.of());
+        park(second, group, java.util.Set.of());
+        park(third, group, java.util.Set.of());
         changed(1, 2);
         assertEquals(List.of(first), resume(1));
         assertEquals(List.of(second), resume(1));
-        queue.park(first, group, java.util.Set.of());
-        queue.park(second, group, java.util.Set.of());
+        park(first, group, java.util.Set.of());
+        park(second, group, java.util.Set.of());
         assertTrue(resume(10).isEmpty(), "failed retries do not replenish the budget");
         changed(2, 1);
         assertEquals(List.of(third), resume(10));
@@ -176,14 +185,14 @@ class CapacityWaitQueueTest {
     void failedHeadDoesNotHideTheNextRequestOnAnotherCapacityObservation() {
         var first = request(1);
         var second = request(2);
-        queue.park(first, group, java.util.Set.of());
-        queue.park(second, group, java.util.Set.of());
+        park(first, group, java.util.Set.of());
+        park(second, group, java.util.Set.of());
         changed(1, 1);
         assertEquals(List.of(first), resume(10));
-        queue.park(first, group, java.util.Set.of());
+        park(first, group, java.util.Set.of());
         changed(2, 1);
         assertEquals(List.of(second), resume(10));
-        queue.remove(second);
+        remove(second);
         changed(3, 1);
         assertEquals(List.of(first), resume(10));
     }
@@ -192,14 +201,14 @@ class CapacityWaitQueueTest {
     void periodicChecksContinueTheScanBeforeRetryingTheHead() {
         var first = request(1);
         var second = request(2);
-        queue.park(first, group, java.util.Set.of());
-        queue.park(second, group, java.util.Set.of());
+        park(first, group, java.util.Set.of());
+        park(second, group, java.util.Set.of());
         check(1);
         assertEquals(List.of(first), resume(10));
-        queue.park(first, group, java.util.Set.of());
+        park(first, group, java.util.Set.of());
         check(1);
         assertEquals(List.of(second), resume(10));
-        queue.park(second, group, java.util.Set.of());
+        park(second, group, java.util.Set.of());
         check(1);
         assertEquals(List.of(first), resume(10));
     }
@@ -208,11 +217,11 @@ class CapacityWaitQueueTest {
     void exactAndAnyGroupWaitersShareTheSameWorkerBudget() {
         var first = request(1);
         var second = request(2);
-        queue.park(first, group, java.util.Set.of());
-        queue.park(second, new CapacityKey(RoleType.PREFILL, null, null), java.util.Set.of());
+        park(first, group, java.util.Set.of());
+        park(second, new CapacityKey(RoleType.PREFILL, null, null), java.util.Set.of());
         changed(1, 1);
         assertEquals(List.of(first), resume(10));
-        queue.remove(first);
+        remove(first);
         assertTrue(resume(10).isEmpty());
         changed(2, 1);
         assertEquals(List.of(second), resume(10));
@@ -221,7 +230,7 @@ class CapacityWaitQueueTest {
     @Test
     void unrelatedRolesAndGroupsDoNotResumeWaiters() {
         var first = request(1);
-        queue.park(first, group, java.util.Set.of());
+        park(first, group, java.util.Set.of());
         queue.capacityChanged(capacity(RoleType.DECODE, "g", 2, 1, 10));
         queue.capacityChanged(capacity(RoleType.PREFILL, "other", 3, 1, 10));
         assertTrue(resume(10).isEmpty());
@@ -234,10 +243,10 @@ class CapacityWaitQueueTest {
     @Test
     void lowerOrDuplicateRevisionDoesNotRestoreSpentBudget() {
         var first = request(1);
-        queue.park(first, group, java.util.Set.of());
+        park(first, group, java.util.Set.of());
         changed(3, 1);
         assertEquals(List.of(first), resume(10));
-        queue.park(first, group, java.util.Set.of());
+        park(first, group, java.util.Set.of());
         changed(2, 100);
         changed(3, 100);
         assertTrue(resume(10).isEmpty());
@@ -248,16 +257,16 @@ class CapacityWaitQueueTest {
         var first = request(1);
         var second = request(2);
         var third = request(3);
-        queue.park(first, group, java.util.Set.of());
-        queue.park(second, group, java.util.Set.of());
-        queue.park(third, group, java.util.Set.of());
+        park(first, group, java.util.Set.of());
+        park(second, group, java.util.Set.of());
+        park(third, group, java.util.Set.of());
         changed(1, 2);
         assertEquals(List.of(first, second), resume(10));
         changed(2, 2);
         assertTrue(resume(10).isEmpty());
-        queue.park(first, group, java.util.Set.of());
+        park(first, group, java.util.Set.of());
         assertEquals(List.of(third), resume(10));
-        queue.remove(second);
+        remove(second);
         assertTrue(
                 resume(10).isEmpty(), "completed old attempts must consume their refreshed claim");
     }
@@ -265,11 +274,11 @@ class CapacityWaitQueueTest {
     @Test
     void notificationDuringTheOnlyRetryIsRetainedAfterParking() {
         var first = request(1);
-        queue.park(first, group, java.util.Set.of());
+        park(first, group, java.util.Set.of());
         changed(1, 1);
         assertEquals(List.of(first), resume(10));
         changed(2, 1);
-        queue.park(first, group, java.util.Set.of());
+        park(first, group, java.util.Set.of());
         assertEquals(List.of(first), resume(10));
     }
 
@@ -277,14 +286,61 @@ class CapacityWaitQueueTest {
     void fullGroupGetsOnlyOneControlCheckPerPeriod() {
         var first = request(1);
         var second = request(2);
-        queue.park(first, group, java.util.Set.of());
-        queue.park(second, group, java.util.Set.of());
+        park(first, group, java.util.Set.of());
+        park(second, group, java.util.Set.of());
         check(0);
         assertEquals(List.of(first), resume(10));
-        queue.park(first, group, java.util.Set.of());
+        park(first, group, java.util.Set.of());
         assertTrue(resume(10).isEmpty());
         check(0);
         assertEquals(List.of(second), resume(10));
+    }
+
+    @Test
+    void zeroCapacityNotificationKeepsThePeriodicProbe() {
+        var request = request(1);
+        park(request, group, Set.of());
+        check(0);
+        changed(1, 0);
+        assertEquals(List.of(request), resume(1));
+    }
+
+    @Test
+    void retryResultSettlesThePreviousAttemptBeforeRefreshingCapacity() {
+        var first = request(1);
+        var second = request(2);
+        park(first, group, Set.of());
+        park(second, group, Set.of());
+        changed(1, 1);
+        assertEquals(List.of(first), resume(1));
+
+        queue.retry(first);
+        assertTrue(resume(1).isEmpty(), "a retry does not refund its current budget");
+        queue.checkCapacity(List.of(capacity(RoleType.PREFILL, "g", 1, 1, 1)));
+        assertEquals(List.of(second), resume(1));
+        remove(second);
+        changed(2, 1);
+        assertEquals(List.of(first), resume(1));
+    }
+
+    @Test
+    void inFlightControlCheckStillCountsWhenWorkerCapacityReturnsThenFills() {
+        var probe = request(1);
+        var retry = request(2);
+        var waiting = request(3);
+        park(probe, group, java.util.Set.of());
+        park(retry, group, java.util.Set.of());
+        park(waiting, group, java.util.Set.of());
+        check(0);
+        assertEquals(List.of(probe), resume(10));
+
+        check(1);
+        assertEquals(List.of(retry), resume(10));
+        check(0);
+        assertTrue(resume(10).isEmpty());
+
+        park(probe, group, java.util.Set.of());
+        assertEquals(List.of(waiting), resume(10));
     }
 
     @Test
@@ -292,12 +348,12 @@ class CapacityWaitQueueTest {
         var first = request(1);
         var second = request(2);
         var third = request(3);
-        queue.park(first, group, java.util.Set.of());
-        queue.park(second, group, java.util.Set.of());
-        queue.park(third, group, java.util.Set.of());
+        park(first, group, java.util.Set.of());
+        park(second, group, java.util.Set.of());
+        park(third, group, java.util.Set.of());
         changed(1, 2);
         assertEquals(List.of(first), resume(1));
-        queue.remove(second);
+        remove(second);
         assertEquals(List.of(third), resume(1));
     }
 
@@ -305,31 +361,28 @@ class CapacityWaitQueueTest {
     void aRunningHeadDoesNotBlockAnotherGroup() {
         var first = request(1);
         var second = request(2);
-        queue.park(first, group, java.util.Set.of());
-        queue.park(second, new CapacityKey(RoleType.DECODE, "g", null), java.util.Set.of());
+        park(first, group, java.util.Set.of());
+        park(second, new CapacityKey(RoleType.DECODE, "g", null), java.util.Set.of());
         changed(1, 1);
         queue.capacityChanged(capacity(RoleType.DECODE, "g", 2, 1, 1));
-        var resumed = new ArrayList<RequestContext>();
-        queue.resumeReady(2, request -> request != first, resumed::add);
-        assertEquals(List.of(second), resumed);
+        assertEquals(List.of(second), resume(2, request -> request != first));
         assertEquals(List.of(first), resume(2));
     }
 
     @Test
     void movingToAnotherGroupAndClearingReleaseMembership() {
         var first = request(1);
-        queue.park(first, group, java.util.Set.of());
+        park(first, group, java.util.Set.of());
         changed(1, 1);
         assertEquals(List.of(first), resume(1));
         var other = new CapacityKey(RoleType.DECODE, "g", null);
-        queue.park(first, other, java.util.Set.of());
-        assertTrue(queue.isWaiting(first));
+        park(first, other, java.util.Set.of());
+        assertFalse(queue.canSchedule(first));
         queue.capacityChanged(capacity(RoleType.DECODE, "g", 2, 1, 1));
         assertEquals(List.of(first), resume(1));
         queue.clear();
-        assertFalse(queue.isWaiting(first));
+        assertTrue(queue.canSchedule(first));
         assertFalse(queue.hasWaitingRequests());
-        assertFalse(queue.hasReadyRequests());
     }
 
     private void changed(long revision, long slots) {
@@ -350,9 +403,33 @@ class CapacityWaitQueueTest {
     }
 
     private List<RequestContext> resume(int limit) {
+        return resume(limit, ignored -> true);
+    }
+
+    private List<RequestContext> resume(
+            int limit, java.util.function.Predicate<RequestContext> canRun) {
         var resumed = new ArrayList<RequestContext>();
-        queue.resumeReady(limit, request -> true, resumed::add);
+        ordered.beginScan();
+        while (resumed.size() < limit && ordered.hasUnscannedRequests()) {
+            for (var request :
+                    ordered.scanForPlanningCandidates(
+                            limit - resumed.size(),
+                            Integer.MAX_VALUE,
+                            candidate -> canRun.test(candidate) && queue.canSchedule(candidate))) {
+                if (queue.tryStartRetry(request)) resumed.add(request);
+            }
+        }
         return resumed;
+    }
+
+    private void park(RequestContext request, CapacityKey blocker, Set<Long> hints) {
+        if (!ordered.contains(request)) ordered.add(request);
+        queue.park(request, blocker, hints);
+    }
+
+    private void remove(RequestContext request) {
+        ordered.remove(request);
+        queue.remove(request);
     }
 
     private static RequestContext request(long sequence) {

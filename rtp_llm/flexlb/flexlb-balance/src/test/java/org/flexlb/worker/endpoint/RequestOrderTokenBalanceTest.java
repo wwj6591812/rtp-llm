@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -37,7 +38,7 @@ import static org.mockito.Mockito.when;
 class RequestOrderTokenBalanceTest {
     @ParameterizedTest
     @CsvSource({"false", "true"})
-    void waitingRequestChoosesTheNewCacheLeaderWithoutWorkerCapacityChanges(boolean priority) {
+    void notificationLetsWaitingRequestChooseNewCacheLeaderWithoutCapacityChange(boolean priority) {
         var config = new FlexlbConfig();
         var prefill = config.getRouter().getRoles().getPrefill();
         prefill.getSelection().setType(RoutingConfig.PrefillSelectionType.TOKEN_BALANCE);
@@ -74,7 +75,7 @@ class RequestOrderTokenBalanceTest {
             var ordered = new OrderedRequestQueue(priority, false);
             var request = request(config, "waiting", 90);
             ordered.add(request);
-            var waiting = new CapacityWaitQueue(ordered.order());
+            var waiting = new CapacityWaitQueue();
             var blocked = strategy.selectAndRegister(request, RoleType.PREFILL, null);
             assertEquals(SelectionResult.Status.BLOCKED, blocked.status());
             assertEquals(
@@ -91,10 +92,11 @@ class RequestOrderTokenBalanceTest {
                             1));
             assertEquals(oldCapacity, oldLeader.requestCapacity());
             assertEquals(newCapacity, newLeader.requestCapacity());
-            waiting.checkCapacity(List.of(oldCapacity, newCapacity));
-            var resumed = new java.util.ArrayList<RequestContext>();
-            waiting.resumeReady(1, candidate -> true, resumed::add);
-            assertEquals(List.of(request), resumed);
+            assertTrue(waiting.capacityChanged(newCapacity));
+            assertEquals(
+                    List.of(request),
+                    ordered.scanForPlanningCandidates(1, 2, waiting::canSchedule));
+            assertTrue(waiting.tryStartRetry(request));
             var selected = strategy.selectAndRegister(request, RoleType.PREFILL, null);
             assertEquals(SelectionResult.Status.SUCCESS, selected.status());
             assertSame(newLeader, selected.value().endpoint());
@@ -114,7 +116,7 @@ class RequestOrderTokenBalanceTest {
 
     @ParameterizedTest
     @CsvSource({"false", "true"})
-    void fullLeaderAtTheHeadDoesNotHideAnotherRequestsReleasedLeader(boolean priority) {
+    void failedFallbackLetsTheNextWaiterUseRefreshedCapacity(boolean priority) {
         var config = new FlexlbConfig();
         var prefill = config.getRouter().getRoles().getPrefill();
         prefill.getSelection().setType(RoutingConfig.PrefillSelectionType.TOKEN_BALANCE);
@@ -164,29 +166,41 @@ class RequestOrderTokenBalanceTest {
             var second = request(config, "second", 10);
             ordered.add(first);
             ordered.add(second);
-            var waiting = new CapacityWaitQueue(ordered.order());
+            var waiting = new CapacityWaitQueue();
             for (var request : List.of(first, second)) {
                 var blocked = strategy.selectAndRegister(request, RoleType.PREFILL, null);
                 assertEquals(SelectionResult.Status.BLOCKED, blocked.status());
                 waiting.park(request, blocked.blocker(), blocked.candidateGenerations());
             }
             assertTrue(secondLeader.rollbackSelection(secondOccupied));
-            waiting.capacityChanged(secondLeader.requestCapacity());
-            var resumed = new java.util.ArrayList<RequestContext>();
-            waiting.resumeReady(10, request -> true, resumed::add);
-            assertEquals(List.of(second), resumed);
-            assertTrue(waiting.isWaiting(first));
+            var capacity = secondLeader.requestCapacity();
+            waiting.capacityChanged(capacity);
+            assertEquals(
+                    List.of(first), ordered.scanForPlanningCandidates(1, 2, waiting::canSchedule));
+            assertTrue(waiting.tryStartRetry(first));
+            var stillBlocked = strategy.selectAndRegister(first, RoleType.PREFILL, null);
+            assertEquals(SelectionResult.Status.BLOCKED, stillBlocked.status());
+            waiting.park(first, stillBlocked.blocker(), stillBlocked.candidateGenerations());
+            assertFalse(waiting.canSchedule(second), "the first attempt spent this round's slot");
+
+            waiting.checkCapacity(List.of(firstLeader.requestCapacity(), capacity));
+            ordered.beginScan();
+            assertEquals(
+                    List.of(second), ordered.scanForPlanningCandidates(1, 2, waiting::canSchedule));
+            assertTrue(waiting.tryStartRetry(second));
             assertEquals(1, firstLeader.selectionSnapshot().outstandingRequests());
             var selected = strategy.selectAndRegister(second, RoleType.PREFILL, null);
             assertEquals(SelectionResult.Status.SUCCESS, selected.status());
             assertSame(secondLeader, selected.value().endpoint());
             waiting.remove(second);
+            ordered.remove(second);
             assertTrue(secondLeader.rollbackSelection(selected.value().registration()));
             assertTrue(firstLeader.rollbackSelection(firstOccupied));
             waiting.capacityChanged(firstLeader.requestCapacity());
-            resumed.clear();
-            waiting.resumeReady(1, request -> true, resumed::add);
-            assertEquals(List.of(first), resumed);
+            ordered.beginScan();
+            assertEquals(
+                    List.of(first), ordered.scanForPlanningCandidates(1, 2, waiting::canSchedule));
+            assertTrue(waiting.tryStartRetry(first));
             var firstSelected = strategy.selectAndRegister(first, RoleType.PREFILL, null);
             assertEquals(SelectionResult.Status.SUCCESS, firstSelected.status());
             assertSame(firstLeader, firstSelected.value().endpoint());
