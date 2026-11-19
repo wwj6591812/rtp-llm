@@ -9,9 +9,10 @@ import java.util.function.Predicate;
 
 /**
  * Holds requests awaiting scheduling and their fixed ordering. The caller owns synchronization.
- * Scans count every examined entry against the budget; eligibility may remove an entry
+ * FIFO and priority scans count each entry against the budget. Cost ordering ranks the full
+ * eligible snapshot. Eligibility may remove an entry
  * but cannot restore a selected entry during the scan. Removal never settles a request.
- * Restore preserves its sequence and reopens the ordered scan from that position.
+ * Restore preserves the original sequence.
  * Membership is keyed by request identity; queue nodes are private implementation details.
  */
 public interface SchedulingQueue {

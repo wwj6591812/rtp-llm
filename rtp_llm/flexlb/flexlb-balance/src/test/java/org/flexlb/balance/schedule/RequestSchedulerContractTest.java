@@ -2,6 +2,7 @@ package org.flexlb.balance.schedule;
 
 import org.flexlb.balance.metrics.DeliveryMetricsReporter;
 import org.flexlb.balance.metrics.RequestSchedulerReporter;
+import org.flexlb.balance.queue.SchedulingQueue;
 import org.flexlb.balance.request.Response;
 import org.flexlb.balance.requestlog.TheoryCacheHitReporter;
 import org.flexlb.balance.schedule.ResponseCompletionExecutor.RequestFuture;
@@ -10,21 +11,31 @@ import org.flexlb.balance.strategy.SelectionResult;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.ConfigTestSupport;
 import org.flexlb.config.FlexlbConfig;
+import org.flexlb.config.InternalRuntimeSettings;
+import org.flexlb.config.scheduler.QueueOrderingConfig;
 import org.flexlb.config.service.RoleType;
 import org.flexlb.worker.endpoint.CapacityKey;
 import org.flexlb.worker.endpoint.CapacityNotifier;
 import org.flexlb.worker.endpoint.EndpointRegistry;
 import org.flexlb.worker.endpoint.PrefillEndpoint;
 import org.flexlb.worker.endpoint.StrategyErrorType;
+import org.flexlb.worker.endpoint.WorkerEndpoint.CommitStatus;
 import org.flexlb.worker.rpc.EngineGrpcClient;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.Map;
+import java.util.OptionalLong;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -35,8 +46,10 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.anyLong;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -45,6 +58,145 @@ import static org.mockito.Mockito.when;
  * Exercises request ownership, cancellation, admission, and shutdown through both direct and queued schedulers.
  */
 class RequestSchedulerContractTest {
+    @Test
+    void finishingPrefillSelectionFreesThePlannerForTheNextRequest() throws Exception {
+        var runtime = spy(new InternalRuntimeSettings());
+        when(runtime.getQueuePlannerThreads()).thenReturn(1);
+        var config = new FlexlbConfig(runtime);
+        var queueConfig = SchedulingTestConfig.useFifoQueue(config);
+        queueConfig.getOrdering().getPolicy().setType(QueueOrderingConfig.PolicyType.PREFILL_COST);
+        queueConfig.setCapacityCheckIntervalMs(30_000L);
+
+        try (Fixture f = new Fixture(config, false)) {
+            var cheaper = f.context(948L);
+            var moreExpensive = f.context(949L);
+            var firstRoute = RequestProtocolTestSupport.mockSelectedRoute(cheaper);
+            when(firstRoute.prefillEndpoint().acceptsNewRequests()).thenReturn(true);
+            when(firstRoute.prefillEndpoint().confirmSelection(any(), any(), anyLong()))
+                    .thenReturn(CommitStatus.COMMITTED);
+
+            var firstStarted = new CountDownLatch(1);
+            var finishFirst = new CountDownLatch(1);
+            var secondStarted = new CountDownLatch(1);
+            when(f.router.selectAndRegister(any(), any()))
+                    .thenAnswer(
+                            call -> {
+                                if (call.getArgument(0) == cheaper) {
+                                    firstStarted.countDown();
+                                    RequestProtocolTestSupport.await(finishFirst);
+                                    return SelectionResult.success(firstRoute);
+                                }
+                                secondStarted.countDown();
+                                return rejection();
+                            });
+            var firstResponse = f.scheduler.submit(cheaper);
+            f.scheduler.submit(moreExpensive);
+            var queue = (SchedulingQueue) ReflectionTestUtils.getField(f.scheduler, "orderedQueue");
+            for (var estimate : queue.estimates(2)) {
+                estimate.complete(OptionalLong.of(estimate.request() == cheaper ? 4 : 12));
+            }
+
+            var schedulerThread =
+                    (Thread) ReflectionTestUtils.getField(f.scheduler, "schedulerThread");
+            try {
+                f.scheduler.start();
+                RequestProtocolTestSupport.await(firstStarted);
+                RequestProtocolTestSupport.awaitCondition(
+                        () -> schedulerThread.getState() == Thread.State.TIMED_WAITING);
+                assertEquals(
+                        1L,
+                        secondStarted.getCount(),
+                        "The first selection occupies the only planner");
+            } finally {
+                finishFirst.countDown();
+            }
+
+            assertTrue(firstResponse.get(2, TimeUnit.SECONDS).isSuccess());
+            assertTrue(
+                    secondStarted.await(2, TimeUnit.SECONDS),
+                    "The next request should start after the first selection, before the capacity check");
+        }
+    }
+
+    @Test
+    void prefillCostFillsSparePlannersWithDifferentCostsAndReplacesAFinishedTask()
+            throws Exception {
+        var runtime = spy(new InternalRuntimeSettings());
+        when(runtime.getQueuePlannerThreads()).thenReturn(8);
+        var config = new FlexlbConfig(runtime);
+        var queueConfig = SchedulingTestConfig.useFifoQueue(config);
+        queueConfig.getOrdering().getPolicy().setType(QueueOrderingConfig.PolicyType.PREFILL_COST);
+        queueConfig.setCapacityCheckIntervalMs(30_000L);
+
+        try (Fixture f = new Fixture(config, false)) {
+            var requests = IntStream.range(0, 9).mapToObj(i -> f.context(955L + i)).toList();
+            var firstFour = requests.subList(0, 4);
+            var waiting = requests.subList(4, 9);
+            var mostExpensive = waiting.getFirst();
+            var finishFirst = new CountDownLatch(1);
+            var finishOthers = new CountDownLatch(1);
+            var firstFourStarted = new CountDownLatch(4);
+            var nextFourStarted = new CountDownLatch(4);
+            var lastStarted = new CountDownLatch(1);
+            var nextSelections = ConcurrentHashMap.<RequestContext>newKeySet();
+            when(f.router.selectAndRegister(any(), any()))
+                    .thenAnswer(
+                            call -> {
+                                RequestContext request = call.getArgument(0);
+                                if (firstFour.contains(request)) firstFourStarted.countDown();
+                                else if (request == mostExpensive) lastStarted.countDown();
+                                else {
+                                    nextSelections.add(request);
+                                    nextFourStarted.countDown();
+                                }
+                                RequestProtocolTestSupport.await(
+                                        request == firstFour.getFirst()
+                                                ? finishFirst
+                                                : finishOthers);
+                                return rejection();
+                            });
+
+            var queue = (SchedulingQueue) ReflectionTestUtils.getField(f.scheduler, "orderedQueue");
+            var lock = (ReentrantLock) ReflectionTestUtils.getField(f.scheduler, "lock");
+            try {
+                firstFour.forEach(f.scheduler::submit);
+                for (var ticket : queue.estimates(4)) {
+                    ticket.complete(OptionalLong.of(firstFour.indexOf(ticket.request()) + 1L));
+                }
+                f.scheduler.start();
+                RequestProtocolTestSupport.await(firstFourStarted);
+
+                lock.lock();
+                try {
+                    waiting.forEach(f.scheduler::submit);
+                    for (var ticket : queue.estimates(5)) {
+                        ticket.complete(OptionalLong.of(16L - waiting.indexOf(ticket.request())));
+                    }
+                } finally {
+                    lock.unlock();
+                }
+                RequestProtocolTestSupport.await(nextFourStarted);
+                assertEquals(Set.copyOf(waiting.subList(1, 5)), nextSelections);
+
+                lock.lock();
+                try {
+                    var executing =
+                            (Map<?, ?>) ReflectionTestUtils.getField(f.scheduler, "executing");
+                    assertEquals(8, executing.size());
+                    assertFalse(executing.containsKey(mostExpensive));
+                } finally {
+                    lock.unlock();
+                }
+
+                finishFirst.countDown();
+                RequestProtocolTestSupport.await(lastStarted);
+            } finally {
+                finishFirst.countDown();
+                finishOthers.countDown();
+            }
+        }
+    }
+
     @Test
     void waitingCountIncludesRegisteredRequestsBeforeTheFirstDecision() throws Exception {
         try (Fixture f = new Fixture(true, false)) {
@@ -825,7 +977,7 @@ class RequestSchedulerContractTest {
      * Builds either scheduler mode around a controlled selector and owns the shared runtime used by its requests.
      */
     private static final class Fixture implements AutoCloseable {
-        final FlexlbConfig config = SchedulingTestConfig.newConfig();
+        final FlexlbConfig config;
         final RequestRouteSelector router = mock(RequestRouteSelector.class);
         final AbstractRequestScheduler requests;
         final AbstractRequestScheduler scheduler;
@@ -835,11 +987,11 @@ class RequestSchedulerContractTest {
         }
 
         Fixture(boolean queued, boolean startPlacement) {
-            if (queued) {
-                SchedulingTestConfig.useFifoQueue(config);
-            } else {
-                config.setScheduler(ConfigTestSupport.direct());
-            }
+            this(schedulingConfig(queued), startPlacement);
+        }
+
+        Fixture(FlexlbConfig config, boolean startPlacement) {
+            this.config = config;
             ConfigService service = mock(ConfigService.class);
             when(service.loadBalanceConfig()).thenReturn(config);
             var reporter = mock(DeliveryMetricsReporter.class);
@@ -871,6 +1023,16 @@ class RequestSchedulerContractTest {
 
         RequestContext context(long id) {
             return RequestProtocolTestSupport.context(config, id);
+        }
+
+        private static FlexlbConfig schedulingConfig(boolean queued) {
+            var config = SchedulingTestConfig.newConfig();
+            if (queued) {
+                SchedulingTestConfig.useFifoQueue(config);
+            } else {
+                config.setScheduler(ConfigTestSupport.direct());
+            }
+            return config;
         }
     }
 }

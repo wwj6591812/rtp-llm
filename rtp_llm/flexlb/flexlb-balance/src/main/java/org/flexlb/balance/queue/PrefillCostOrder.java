@@ -8,12 +8,11 @@ import java.util.Comparator;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.NavigableSet;
-import java.util.TreeSet;
+import java.util.PriorityQueue;
 import java.util.function.Predicate;
 
 /**
- * Compares exact compute/input ratios after a budgeted scan, preserving priority arbitration.
+ * Ranks a queue snapshot by priority and exact compute/input ratios.
  * Unknown estimates use stable ordering; estimates remain usable while a refresh is in flight.
  */
 final class PrefillCostOrder {
@@ -21,19 +20,12 @@ final class PrefillCostOrder {
 
     private final Comparator<RequestContext> stableOrder;
     private final Map<RequestContext, Entry> entries = new IdentityHashMap<>();
-    private final NavigableSet<RequestContext> stable;
-    private final NavigableSet<RequestContext> ranked = new TreeSet<>(this::compare);
-
-    private boolean pendingSelection;
-
-    private final Map<RequestContext, Long> running = new IdentityHashMap<>();
     private final java.util.LinkedHashSet<SchedulingQueue.EstimateRequest> refresh =
             new java.util.LinkedHashSet<>();
 
     PrefillCostOrder(boolean priority, Comparator<RequestContext> stableOrder) {
         this.priority = priority;
         this.stableOrder = stableOrder;
-        stable = new TreeSet<>(stableOrder);
     }
 
     void add(RequestContext request) {
@@ -43,46 +35,35 @@ final class PrefillCostOrder {
     }
 
     List<RequestContext> select(
-            List<RequestContext> page,
-            boolean scanComplete,
-            int limit,
-            int remainingChecks,
-            Predicate<RequestContext> eligible) {
-
+            List<RequestContext> snapshot, int limit, Predicate<RequestContext> eligible) {
+        var ready = new ArrayList<RequestContext>();
+        boolean unknown = false;
         long now = System.nanoTime();
-        for (var request : page) {
+        for (var request : snapshot) {
+            if (!eligible.test(request)) continue;
             var entry = entries.get(request);
             if (entry == null) continue;
-            stable.add(request);
-            if (known(request)) ranked.add(request);
+            ready.add(request);
+            unknown |= entry.compute < 0 || input(request) <= 0;
             if (entry.ticket == null
                     && now - entry.estimatedAtNanos
                             >= java.util.concurrent.TimeUnit.SECONDS.toNanos(1))
                 enqueue(request, entry);
         }
-        if (!scanComplete) return List.of();
-        var selected = new ArrayList<RequestContext>();
-        pendingSelection = false;
-        for (; !stable.isEmpty() && selected.size() < limit; remainingChecks--) {
-            if (remainingChecks == 0) {
-                pendingSelection = true;
-                break;
+        if (ready.size() <= 1) return ready;
+        Comparator<RequestContext> order = unknown ? stableOrder : this::compare;
+        // As in GLM, keep the worst of the retained requests at the heap head.
+        var selected =
+                new PriorityQueue<RequestContext>(Math.min(limit, ready.size()), order.reversed());
+        for (var request : ready) {
+            if (selected.size() < limit) {
+                selected.add(request);
+            } else if (order.compare(request, selected.element()) < 0) {
+                selected.remove();
+                selected.add(request);
             }
-            boolean unknown = stable.size() != ranked.size() || running.containsValue(null);
-            var request = (unknown ? stable : ranked).first();
-            if (!eligible.test(request)) {
-                discard(request);
-                continue;
-            }
-            if (running.keySet().stream().anyMatch(active -> blocks(active, request, unknown)))
-                break;
-            if (!unknown && !selected.isEmpty() && differentClass(selected.getFirst(), request))
-                break;
-            discard(request);
-            running.put(request, known(request) ? entries.get(request).compute : null);
-            selected.add(request);
         }
-        return selected;
+        return selected.stream().sorted(order).toList();
     }
 
     List<SchedulingQueue.EstimateRequest> estimates(int limit) {
@@ -97,73 +78,9 @@ final class PrefillCostOrder {
         return result;
     }
 
-    boolean hasPendingSelection() {
-        return pendingSelection;
-    }
-
-    void finished(RequestContext request) {
-        running.remove(request);
-        var entry = entries.get(request);
-        if (entry != null
-                && entry.ticket == null
-                && System.nanoTime() - entry.estimatedAtNanos
-                        >= java.util.concurrent.TimeUnit.SECONDS.toNanos(1))
-            enqueue(request, entry);
-    }
-
     void remove(RequestContext request) {
-        discard(request);
         var entry = entries.remove(request);
         if (entry != null && entry.ticket != null) refresh.remove(entry.ticket);
-
-        // A planner may still be completing; finished() removes its frozen input.
-    }
-
-    private void discard(RequestContext request) {
-        stable.remove(request);
-        if (known(request)) ranked.remove(request);
-    }
-
-    private boolean known(RequestContext request) {
-        var entry = entries.get(request);
-        return entry != null && entry.compute >= 0 && input(request) > 0;
-    }
-
-    private static long input(RequestContext request) {
-        return request.getRequest().getSeqLen();
-    }
-
-    private boolean blocks(RequestContext active, RequestContext candidate, boolean unknown) {
-        if (priority && SchedulingQueue.priority(active) != SchedulingQueue.priority(candidate))
-            return SchedulingQueue.priority(active) > SchedulingQueue.priority(candidate);
-        return !unknown
-                && ratio(
-                                running.get(active),
-                                input(active),
-                                entries.get(candidate).compute,
-                                input(candidate))
-                        < 0;
-    }
-
-    private static int ratio(long left, long leftInput, long right, long rightInput) {
-        try {
-            return Long.compare(
-                    Math.multiplyExact(left, rightInput), Math.multiplyExact(right, leftInput));
-        } catch (ArithmeticException overflow) {
-            return BigInteger.valueOf(left)
-                    .multiply(BigInteger.valueOf(rightInput))
-                    .compareTo(BigInteger.valueOf(right).multiply(BigInteger.valueOf(leftInput)));
-        }
-    }
-
-    private boolean differentClass(RequestContext first, RequestContext other) {
-        return priority && SchedulingQueue.priority(first) != SchedulingQueue.priority(other)
-                || ratio(
-                                entries.get(first).compute,
-                                input(first),
-                                entries.get(other).compute,
-                                input(other))
-                        != 0;
     }
 
     private int compare(RequestContext a, RequestContext b) {
@@ -180,15 +97,28 @@ final class PrefillCostOrder {
         return compared == 0 ? stableOrder.compare(a, b) : compared;
     }
 
+    private static int ratio(long left, long leftInput, long right, long rightInput) {
+        try {
+            return Long.compare(
+                    Math.multiplyExact(left, rightInput), Math.multiplyExact(right, leftInput));
+        } catch (ArithmeticException overflow) {
+            return BigInteger.valueOf(left)
+                    .multiply(BigInteger.valueOf(rightInput))
+                    .compareTo(BigInteger.valueOf(right).multiply(BigInteger.valueOf(leftInput)));
+        }
+    }
+
+    private static long input(RequestContext request) {
+        return request.getRequest().getSeqLen();
+    }
+
     private void enqueue(RequestContext request, Entry entry) {
         entry.ticket =
                 new SchedulingQueue.EstimateRequest(
                         request,
                         estimate -> {
                             if (entries.get(request) != entry || entry.ticket == null) return;
-                            if (known(request)) ranked.remove(request);
                             entry.compute = estimate.orElse(-1L);
-                            if (stable.contains(request) && known(request)) ranked.add(request);
                             entry.ticket = null;
                             entry.estimatedAtNanos = System.nanoTime();
                         });

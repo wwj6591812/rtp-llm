@@ -392,7 +392,6 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
             lock.lock();
             try {
                 ticket.complete(estimate);
-                changed.signal();
             } finally {
                 lock.unlock();
             }
@@ -433,7 +432,7 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
                 executing.remove(task.request, task);
                 if (waitingRequests.retry(task.request)) orderedQueue.beginScan();
                 orderedQueue.retry(task.request);
-                if (stopped || orderedQueue.hasUnscannedRequests()) changed.signal();
+                changed.signal();
             } finally {
                 lock.unlock();
             }

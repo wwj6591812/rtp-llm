@@ -5,6 +5,8 @@ import org.flexlb.balance.schedule.RequestContext;
 import org.flexlb.balance.schedule.SchedulingMetadata;
 import org.flexlb.balance.schedule.SchedulingTestConfig;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.List;
 import java.util.OptionalLong;
@@ -13,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Checks priority composition, bounded scans and stale asynchronous estimates.
+ * Checks priority composition, snapshot selection and stale asynchronous estimates.
  */
 class PrefillCostOrderTest {
     @Test
@@ -35,26 +37,6 @@ class PrefillCostOrderTest {
     }
 
     @Test
-    void equalDensityRunsTogetherAndBetterRunningDensityBlocksWorse() {
-        var queue = new OrderedRequestQueue(false, true);
-        var first = entry(50);
-        var equal = entry(50, 200L);
-        var worse = entry(50);
-        queue.add(first);
-        queue.add(equal);
-        queue.add(worse);
-        for (var ticket : queue.estimates(10))
-            ticket.complete(
-                    OptionalLong.of(
-                            ticket.request() == worse ? 80 : ticket.request() == equal ? 40 : 20));
-        assertEquals(List.of(first, equal), queue.scanForPlanningCandidates(3, 10, r -> true));
-        queue.retry(equal);
-        queue.beginScan();
-        assertEquals(List.of(equal), queue.scanForPlanningCandidates(3, 10, r -> r != first));
-        queue.retry(first);
-    }
-
-    @Test
     void lateEstimateCannotChangeRestoredMembershipAndHugeProductsRemainExact() {
         var queue = new OrderedRequestQueue(false, true);
         var first = entry(50, Long.MAX_VALUE);
@@ -71,23 +53,44 @@ class PrefillCostOrderTest {
         assertTrue(queue.estimates(10).isEmpty());
     }
 
-    @Test
-    void scanBudgetDoesNotLoseCheaperRequestsBeyondFirstPage() {
+    @ParameterizedTest
+    @ValueSource(ints = {1, 4})
+    void takesTopRequestsFromTheWholeSnapshot(int limit) {
         var queue = new OrderedRequestQueue(false, true);
-        var first = entry(50);
-        var cheap = entry(50);
-        queue.add(first);
-        queue.add(cheap);
-        complete(queue, first, 90, cheap, 10);
-        assertTrue(queue.scanForPlanningCandidates(1, 1, r -> true).isEmpty());
-        var checks = new java.util.concurrent.atomic.AtomicInteger();
-        assertTrue(
-                queue.scanForPlanningCandidates(1, 1, r -> checks.incrementAndGet() > 0).isEmpty());
-        assertEquals(1, checks.get());
+        var expensive = entry(50);
+        var cheapest = entry(50);
+        var ready = List.of(expensive, entry(50), entry(50), entry(50), cheapest);
+        var cancelled = entry(50);
+        queue.add(cancelled);
+        ready.forEach(queue::add);
+        long compute = 50;
+        for (var ticket : queue.estimates(6)) {
+            if (ticket.request() != cancelled) {
+                ticket.complete(OptionalLong.of(compute));
+                compute -= 10;
+            }
+        }
+        var ranked = ready.reversed();
         assertEquals(
-                List.of(cheap),
-                queue.scanForPlanningCandidates(1, 1, r -> checks.incrementAndGet() > 0));
-        assertEquals(2, checks.get());
+                ranked.subList(0, limit),
+                queue.scanForPlanningCandidates(limit, 1, request -> request != cancelled));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void eachCallIncludesTheLatestBestArrival(boolean priority) {
+        var queue = new OrderedRequestQueue(priority, true);
+        var original = entry(50);
+        queue.add(original);
+        queue.estimates(1).getFirst().complete(OptionalLong.of(50));
+        assertEquals(List.of(original), queue.scanForPlanningCandidates(1, 1, r -> true));
+
+        for (int remaining = 10; remaining > 0; remaining--) {
+            var arrival = entry(90);
+            queue.add(arrival);
+            queue.estimates(1).getFirst().complete(OptionalLong.of(remaining));
+            assertEquals(List.of(arrival), queue.scanForPlanningCandidates(1, 1, r -> true));
+        }
     }
 
     private static void complete(
