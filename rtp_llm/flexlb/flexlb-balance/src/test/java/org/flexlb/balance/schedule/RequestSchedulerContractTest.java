@@ -198,6 +198,38 @@ class RequestSchedulerContractTest {
     }
 
     @Test
+    void prefillCostSkipsCancelledRequestBeforeQueueCleanup() throws Exception {
+        var config = new FlexlbConfig(new InternalRuntimeSettings());
+        var queueConfig = SchedulingTestConfig.useFifoQueue(config);
+        queueConfig.getOrdering().getPolicy().setType(QueueOrderingConfig.PolicyType.PREFILL_COST);
+        try (Fixture f = new Fixture(config, false)) {
+            var cancelled = f.context(948L);
+            var ready = f.context(949L);
+            f.scheduler.submit(cancelled);
+            var response = f.scheduler.submit(ready);
+            var queue = (SchedulingQueue) ReflectionTestUtils.getField(f.scheduler, "orderedQueue");
+            for (var estimate : queue.estimates(2)) {
+                estimate.complete(OptionalLong.of(estimate.request() == cancelled ? 1 : 10));
+            }
+            assertTrue(
+                    cancelled.requestCancel(
+                            CancelReason.CLIENT_CANCELLED,
+                            false,
+                            System.currentTimeMillis(),
+                            StrategyErrorType.DISPATCH_FAILED,
+                            null,
+                            null));
+            assertTrue(queue.contains(cancelled));
+            when(f.router.selectAndRegister(any(), any())).thenReturn(rejection());
+
+            f.scheduler.start();
+            assertFalse(response.get(2, TimeUnit.SECONDS).isSuccess());
+            verify(f.router).selectAndRegister(org.mockito.ArgumentMatchers.eq(ready), any());
+            verify(f.router, times(1)).selectAndRegister(any(), any());
+        }
+    }
+
+    @Test
     void waitingCountIncludesRegisteredRequestsBeforeTheFirstDecision() throws Exception {
         try (Fixture f = new Fixture(true, false)) {
             var context = f.context(945L);
@@ -513,6 +545,31 @@ class RequestSchedulerContractTest {
             f.requests.cancel("947", CancelReason.SHUTDOWN);
             assertFalse(response.get(3, TimeUnit.SECONDS).isSuccess());
             assertTrue(f.scheduler.awaitStopped(System.nanoTime() + TimeUnit.SECONDS.toNanos(3)));
+        }
+    }
+
+    @Test
+    void queueSchedulerThreadCannotEnterApplicationShutdown() throws Exception {
+        try (Fixture f = new Fixture(true, false)) {
+            var preemption =
+                    (RequestPreemption) ReflectionTestUtils.getField(f.scheduler, "preemption");
+            var rejected = new CompletableFuture<Boolean>();
+            when(preemption.readyWork())
+                    .thenAnswer(
+                            call -> {
+                                try {
+                                    f.scheduler.checkShutdownThread();
+                                    rejected.complete(false);
+                                } catch (IllegalStateException expected) {
+                                    rejected.complete(true);
+                                }
+                                return java.util.List.of();
+                            });
+
+            f.scheduler.start();
+            assertTrue(
+                    rejected.get(3, TimeUnit.SECONDS),
+                    "The queue's scheduling thread must be rejected before application shutdown");
         }
     }
 

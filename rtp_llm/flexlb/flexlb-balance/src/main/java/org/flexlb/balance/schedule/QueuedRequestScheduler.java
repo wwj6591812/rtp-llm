@@ -179,8 +179,7 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
 
     @Override
     public boolean awaitStopped(long deadlineNanos) {
-        if (Boolean.TRUE.equals(planningThread.get()) || Thread.currentThread() == schedulerThread)
-            return false;
+        if (isOnSchedulingThread()) return false;
         boolean interrupted = false;
         try {
             while (schedulerThread.isAlive()) {
@@ -211,6 +210,11 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
         } finally {
             if (interrupted) Thread.currentThread().interrupt();
         }
+    }
+
+    @Override
+    protected boolean isExecutingRequestWork() {
+        return isOnSchedulingThread() || super.isExecutingRequestWork();
     }
 
     @Override
@@ -351,6 +355,7 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
         }
         int remaining = slots - tasks.size();
         if (!stopped && remaining > 0) {
+            long nowMs = System.currentTimeMillis();
             var candidates =
                     orderedQueue.scanForPlanningCandidates(
                             remaining,
@@ -361,6 +366,7 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
                             request ->
                                     !executing.containsKey(request)
                                             && !waiting.contains(request)
+                                            && canPlan(request, nowMs)
                                             && waitingRequests.canSchedule(request));
             // Finish the budgeted scan before assigning the sole free slot to another refresh.
             if (!orderedQueue.hasUnscannedRequests()) refreshBeforePlanning = true;
@@ -398,6 +404,12 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
         }
     }
 
+    private boolean canPlan(RequestContext request, long nowMs) {
+        if (request.isResponseDone() || nowMs >= request.getRequestExpiresAtMs()) return false;
+        var state = request.snapshot();
+        return state.phase() == RequestContext.Phase.OPEN && state.cancellationReason() == null;
+    }
+
     private void submit(SchedulingTask task) {
         try {
             planners.execute(() -> runTask(task));
@@ -426,7 +438,6 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
             publishResponse(task.request, response, false);
             removeRequest(task.request);
         } finally {
-            planningThread.remove();
             lock.lock();
             try {
                 executing.remove(task.request, task);
@@ -435,6 +446,7 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
                 changed.signal();
             } finally {
                 lock.unlock();
+                planningThread.remove();
             }
         }
     }
@@ -574,6 +586,11 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
                         counts,
                         result.failure() == null ? null : result.failure().getErrorMessage(),
                         result.diagnostics()));
+    }
+
+    private boolean isOnSchedulingThread() {
+        return Thread.currentThread() == schedulerThread
+                || Boolean.TRUE.equals(planningThread.get());
     }
 
     private void requestRun() {
