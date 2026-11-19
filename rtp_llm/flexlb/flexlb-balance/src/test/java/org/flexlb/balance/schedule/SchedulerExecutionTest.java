@@ -90,18 +90,17 @@ class SchedulerExecutionTest {
             waiting.park(waiter, worker, Set.of());
             notifications.notifyChanged(endpoint);
 
-            ReflectionTestUtils.invokeMethod(scheduler, "chooseTasks", List.of(), Set.of());
+            ReflectionTestUtils.invokeMethod(scheduler, "chooseTasks");
             assertEquals(Set.of(first), executing.keySet(), "the FIFO head takes the only planner");
 
             notifications.notifyChanged(endpoint);
             scheduler.removeRequest(first);
             executing.remove(first);
-            List<?> next =
-                    ReflectionTestUtils.invokeMethod(scheduler, "chooseTasks", List.of(), Set.of());
+            List<?> next = ReflectionTestUtils.invokeMethod(scheduler, "chooseTasks");
             assertEquals(List.of(), next, "an unused retry slot must not survive its withdrawal");
 
             notifications.notifyChanged(endpoint);
-            ReflectionTestUtils.invokeMethod(scheduler, "chooseTasks", List.of(), Set.of());
+            ReflectionTestUtils.invokeMethod(scheduler, "chooseTasks");
             assertEquals(Set.of(waiter), executing.keySet(), "fresh capacity lets the waiter run");
         } finally {
             SchedulerTestSupport.shutdown(SchedulerTestSupport.runtime(lifecycle));

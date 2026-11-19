@@ -185,7 +185,8 @@ class RequestOrderTokenBalanceTest {
             waiting.park(first, stillBlocked.blocker(), stillBlocked.candidateGenerations());
             assertFalse(waiting.canSchedule(second), "the first attempt spent this round's slot");
 
-            waiting.checkCapacity(List.of(firstLeader.requestCapacity(), capacity));
+            long sampledVersion = waiting.workerAdditionVersion();
+            waiting.checkCapacity(List.of(firstLeader.requestCapacity(), capacity), sampledVersion);
             ordered.beginScan();
             assertEquals(
                     List.of(second), ordered.scanForPlanningCandidates(1, 2, waiting::canSchedule));

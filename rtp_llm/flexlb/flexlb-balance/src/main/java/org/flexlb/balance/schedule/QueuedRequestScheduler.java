@@ -269,26 +269,30 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
                 try {
                     long now = System.nanoTime();
                     boolean periodicCheck = now - nextCheck >= 0;
+                    long sampledVersion = 0L;
+                    List<WorkerAdmissionCapacity> capacities = List.of();
                     if (periodicCheck) {
                         preemption.requestPeriodicCheck();
                         nextCheck = now + capacityCheckIntervalNanos;
+                        boolean hasWaiters;
+                        lock.lock();
+                        try {
+                            sampledVersion = waitingRequests.workerAdditionVersion();
+                            hasWaiters = !stopped && waitingRequests.hasWaitingRequests();
+                        } finally {
+                            lock.unlock();
+                        }
+                        if (hasWaiters) capacities = router.requestCapacities();
                     }
-                    var capacities =
-                            periodicCheck
-                                    ? capacitySnapshots()
-                                    : List.<WorkerAdmissionCapacity>of();
-                    var ready = preemption.readyWork();
-                    var waiting = preemption.waitingRequests();
-                    boolean preemptionIdle = preemption.isIdle();
                     List<SchedulingTask> tasks;
                     lock.lock();
                     try {
-                        if (stopped && executing.isEmpty() && preemptionIdle) return;
+                        if (stopped && executing.isEmpty() && preemption.isIdle()) return;
                         if (periodicCheck && !stopped) {
-                            waitingRequests.checkCapacity(capacities);
+                            waitingRequests.checkCapacity(capacities, sampledVersion);
                             orderedQueue.beginScan();
                         }
-                        tasks = chooseTasks(ready, waiting);
+                        tasks = chooseTasks();
                         if (tasks.isEmpty()) {
                             if (!stopped
                                     && executing.size() < plannerCount
@@ -314,21 +318,11 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
         }
     }
 
-    private List<WorkerAdmissionCapacity> capacitySnapshots() {
-        lock.lock();
-        try {
-            if (stopped || !waitingRequests.hasWaitingRequests()) return List.of();
-        } finally {
-            lock.unlock();
-        }
-        return router.requestCapacities();
-    }
-
-    private List<SchedulingTask> chooseTasks(
-            List<RequestPreemption.Work> ready, Set<RequestContext> waiting) {
+    private List<SchedulingTask> chooseTasks() {
         int slots = plannerCount - executing.size();
+        if (slots == 0) return List.of();
         List<SchedulingTask> tasks = List.of();
-        for (var work : ready) {
+        for (var work : preemption.readyWork()) {
             if (tasks.size() == slots) break;
             var request = work.selection().requestContext();
             if (executing.containsKey(request)) continue;
@@ -355,6 +349,7 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
         }
         int remaining = slots - tasks.size();
         if (!stopped && remaining > 0) {
+            var waiting = preemption.waitingRequests();
             long nowMs = System.currentTimeMillis();
             var candidates =
                     orderedQueue.scanForPlanningCandidates(

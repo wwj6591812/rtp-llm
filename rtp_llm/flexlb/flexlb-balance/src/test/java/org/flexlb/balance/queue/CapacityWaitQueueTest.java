@@ -82,11 +82,11 @@ class CapacityWaitQueueTest {
         park(stale, group, java.util.Set.of(1L));
         park(matching, group, java.util.Set.of(2L));
         var available = capacity(RoleType.PREFILL, "g", 2, 1, 1);
-        queue.checkCapacity(List.of(available));
+        queue.checkCapacity(List.of(available), queue.workerAdditionVersion());
         assertEquals(List.of(stale), resume(10));
         park(stale, group, java.util.Set.of(2L));
         assertTrue(resume(10).isEmpty());
-        queue.checkCapacity(List.of(available));
+        queue.checkCapacity(List.of(available), queue.workerAdditionVersion());
         assertEquals(
                 List.of(matching),
                 resume(10),
@@ -99,7 +99,8 @@ class CapacityWaitQueueTest {
         var second = request(2);
         park(first, group, java.util.Set.of(1L));
         park(second, group, java.util.Set.of(2L));
-        queue.checkCapacity(List.of(capacity(RoleType.PREFILL, "g", 3, 1, 2)));
+        queue.checkCapacity(
+                List.of(capacity(RoleType.PREFILL, "g", 3, 1, 2)), queue.workerAdditionVersion());
         assertEquals(List.of(first, second), resume(10));
         assertTrue(resume(10).isEmpty());
     }
@@ -241,6 +242,39 @@ class CapacityWaitQueueTest {
     }
 
     @Test
+    void olderPeriodicSnapshotPreservesNewWorkerCapacity() {
+        var first = request(1);
+        var second = request(2);
+        park(first, group, Set.of());
+        park(second, group, Set.of());
+
+        long sampledVersion = queue.workerAdditionVersion();
+        var snapshotBeforeWorkerJoined = List.<WorkerAdmissionCapacity>of();
+        queue.capacityChanged(capacity(RoleType.PREFILL, "g", 2, 1, 2));
+        queue.checkCapacity(snapshotBeforeWorkerJoined, sampledVersion);
+
+        assertEquals(
+                List.of(first, second),
+                resume(2),
+                "An older snapshot must preserve both retry slots announced by the new worker");
+    }
+
+    @Test
+    void nextSnapshotDropsMissingWorkerCapacity() {
+        var first = request(1);
+        var second = request(2);
+        park(first, group, Set.of());
+        park(second, group, Set.of());
+
+        long sampledVersion = queue.workerAdditionVersion();
+        queue.capacityChanged(capacity(RoleType.PREFILL, "g", 2, 1, 2));
+        queue.checkCapacity(List.of(), sampledVersion);
+        queue.checkCapacity(List.of(), queue.workerAdditionVersion());
+
+        assertEquals(List.of(first), resume(2), "Only the group probe can run after withdrawal");
+    }
+
+    @Test
     void lowerOrDuplicateRevisionDoesNotRestoreSpentBudget() {
         var first = request(1);
         park(first, group, java.util.Set.of());
@@ -316,7 +350,8 @@ class CapacityWaitQueueTest {
 
         queue.retry(first);
         assertTrue(resume(1).isEmpty(), "a retry does not refund its current budget");
-        queue.checkCapacity(List.of(capacity(RoleType.PREFILL, "g", 1, 1, 1)));
+        queue.checkCapacity(
+                List.of(capacity(RoleType.PREFILL, "g", 1, 1, 1)), queue.workerAdditionVersion());
         assertEquals(List.of(second), resume(1));
         remove(second);
         changed(2, 1);
@@ -399,7 +434,9 @@ class CapacityWaitQueueTest {
     }
 
     private void check(long slots) {
-        queue.checkCapacity(List.of(capacity(RoleType.PREFILL, "g", 1, 0, slots)));
+        queue.checkCapacity(
+                List.of(capacity(RoleType.PREFILL, "g", 1, 0, slots)),
+                queue.workerAdditionVersion());
     }
 
     private List<RequestContext> resume(int limit) {

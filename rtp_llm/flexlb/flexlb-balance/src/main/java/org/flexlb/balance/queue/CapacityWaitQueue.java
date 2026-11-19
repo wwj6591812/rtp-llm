@@ -23,6 +23,7 @@ public final class CapacityWaitQueue {
     private final Map<RequestContext, Waiter> membership = new IdentityHashMap<>();
     // Worker generation IDs are unique across roles within this process.
     private final Map<Long, RetryBudget> workerBudgets = new HashMap<>();
+    private long workerAdditionVersion;
 
     /**
      * Joins the next pass for the latest blocker. Returns true if a newer budget reopened the pass.
@@ -66,6 +67,7 @@ public final class CapacityWaitQueue {
         if (budget == null) {
             budget = new RetryBudget();
             workerBudgets.put(capacity.generation(), budget);
+            workerAdditionVersion++;
         }
         budget.refreshWorker(capacity);
         boolean rescan = false;
@@ -82,11 +84,19 @@ public final class CapacityWaitQueue {
         return rescan;
     }
 
+    public long workerAdditionVersion() {
+        return workerAdditionVersion;
+    }
+
     /**
      * Refreshes local capacity and permits one control check per full role/group for preemption.
      * The control check is not an Engine admission slot. Worker budgets remain shared across groups.
      */
-    public void checkCapacity(List<WorkerAdmissionCapacity> capacities) {
+    public void checkCapacity(List<WorkerAdmissionCapacity> capacities, long sampledVersion) {
+        if (domains.isEmpty() && capacities.isEmpty()) {
+            workerBudgets.clear();
+            return;
+        }
         var currentWorkers = new HashSet<Long>();
         for (var capacity : capacities) {
             long generation = capacity.generation();
@@ -95,16 +105,18 @@ public final class CapacityWaitQueue {
             if (capacity.revision() >= budget.workerCapacityRevision)
                 budget.refreshWorker(capacity);
         }
-        workerBudgets
-                .entrySet()
-                .removeIf(
-                        entry -> {
-                            if (currentWorkers.contains(entry.getKey())) return false;
-                            var budget = entry.getValue();
-                            if (budget.unfinishedRetries == 0) return true;
-                            budget.refresh(0L);
-                            return false;
-                        });
+        // A new worker notification makes absence from this sample inconclusive.
+        if (sampledVersion == workerAdditionVersion)
+            workerBudgets
+                    .entrySet()
+                    .removeIf(
+                            entry -> {
+                                if (currentWorkers.contains(entry.getKey())) return false;
+                                var budget = entry.getValue();
+                                if (budget.unfinishedRetries == 0) return true;
+                                budget.refresh(0L);
+                                return false;
+                            });
         for (var domain : domains.values()) {
             domain.workers.clear();
             for (var budget : workerBudgets.values())

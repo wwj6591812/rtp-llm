@@ -24,9 +24,11 @@ import org.flexlb.worker.rpc.EngineGrpcClient;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 import java.util.OptionalLong;
 import java.util.Set;
@@ -35,6 +37,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.IntStream;
 
@@ -229,6 +232,56 @@ class RequestSchedulerContractTest {
             assertFalse(response.get(2, TimeUnit.SECONDS).isSuccess());
             verify(f.router).selectAndRegister(org.mockito.ArgumentMatchers.eq(ready), any());
             verify(f.router, times(1)).selectAndRegister(any(), any());
+        }
+    }
+
+    @Test
+    void preemptionCompletionBetweenSnapshotAndWaitWakesScheduler() throws Exception {
+        var config = SchedulingTestConfig.newConfig();
+        SchedulingTestConfig.useFifoQueue(config).setCapacityCheckIntervalMs(30_000L);
+        try (Fixture f = new Fixture(config, false)) {
+            var preemption =
+                    (RequestPreemption) ReflectionTestUtils.getField(f.scheduler, "preemption");
+            var wakeup = ArgumentCaptor.forClass(Runnable.class);
+            verify(preemption).setWakeup(wakeup.capture());
+            var snapshotTaken = new CountDownLatch(1);
+            var returnSnapshot = new CountDownLatch(1);
+            var resumed = new CountDownLatch(1);
+            var firstSnapshot = new AtomicBoolean(true);
+            var ready = new AtomicBoolean();
+            var work =
+                    new RequestPreemption.Work(
+                            new RequestContext.SelectionAttempt(f.context(25002L), 1L),
+                            () -> {
+                                ready.set(false);
+                                resumed.countDown();
+                            });
+            when(preemption.readyWork())
+                    .thenAnswer(
+                            call -> {
+                                if (firstSnapshot.getAndSet(false)) {
+                                    snapshotTaken.countDown();
+                                    RequestProtocolTestSupport.await(returnSnapshot);
+                                    return List.of();
+                                }
+                                return ready.get() ? List.of(work) : List.of();
+                            });
+            var schedulerLock = (ReentrantLock) ReflectionTestUtils.getField(f.scheduler, "lock");
+            var notifier = Thread.ofVirtual().unstarted(wakeup.getValue());
+            try {
+                f.scheduler.start();
+                RequestProtocolTestSupport.await(snapshotTaken);
+                ready.set(true);
+                notifier.start();
+                RequestProtocolTestSupport.awaitCondition(
+                        () -> !notifier.isAlive() || schedulerLock.hasQueuedThread(notifier));
+            } finally {
+                returnSnapshot.countDown();
+            }
+            assertTrue(
+                    resumed.await(2, TimeUnit.SECONDS),
+                    "Ready preemption work must run before the next capacity check");
+            notifier.join();
         }
     }
 
