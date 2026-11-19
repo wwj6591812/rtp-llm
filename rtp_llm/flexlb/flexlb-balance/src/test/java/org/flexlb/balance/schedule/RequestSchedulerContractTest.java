@@ -26,6 +26,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.Collection;
 import java.util.Map;
 import java.util.OptionalLong;
 import java.util.Set;
@@ -47,8 +48,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyLong;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.same;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -226,6 +229,134 @@ class RequestSchedulerContractTest {
             assertFalse(response.get(2, TimeUnit.SECONDS).isSuccess());
             verify(f.router).selectAndRegister(org.mockito.ArgumentMatchers.eq(ready), any());
             verify(f.router, times(1)).selectAndRegister(any(), any());
+        }
+    }
+
+    @Test
+    void directCancellationBeforeEnqueueLeavesNoPendingRequest() throws Exception {
+        try (Fixture f = new Fixture(false)) {
+            int slots = Math.clamp(Runtime.getRuntime().availableProcessors(), 2, 8);
+            var selectionsStarted = new CountDownLatch(slots);
+            var releaseSelections = new CountDownLatch(1);
+            var enteringEnqueue = new CountDownLatch(1);
+            var allowEnqueue = new CountDownLatch(1);
+            var cancelled = f.context(25001L);
+            when(f.router.selectAndRegister(any(), any()))
+                    .thenAnswer(
+                            call -> {
+                                selectionsStarted.countDown();
+                                RequestProtocolTestSupport.await(releaseSelections);
+                                return rejection();
+                            });
+            doAnswer(
+                            call -> {
+                                enteringEnqueue.countDown();
+                                RequestProtocolTestSupport.await(allowEnqueue);
+                                return call.callRealMethod();
+                            })
+                    .when(f.scheduler)
+                    .scheduleRequest(same(cancelled));
+            try {
+                for (int i = 0; i < slots; i++) {
+                    f.requests.submit(f.context(25010L + i));
+                }
+                RequestProtocolTestSupport.await(selectionsStarted);
+                var submission = CompletableFuture.supplyAsync(() -> f.requests.submit(cancelled));
+                RequestProtocolTestSupport.await(enteringEnqueue);
+                f.requests.cancel(cancelled, CancelReason.CLIENT_CANCELLED);
+                allowEnqueue.countDown();
+
+                var response = submission.get(3, TimeUnit.SECONDS).get(3, TimeUnit.SECONDS);
+                assertEquals(
+                        StrategyErrorType.REQUEST_CANCELLED.getErrorCode(), response.getCode());
+                var pending = (Collection<?>) ReflectionTestUtils.getField(f.scheduler, "pending");
+                synchronized (pending) {
+                    assertFalse(
+                            pending.contains(cancelled),
+                            "The cancelled request must stay out of pending");
+                }
+            } finally {
+                allowEnqueue.countDown();
+                releaseSelections.countDown();
+            }
+        }
+    }
+
+    @Test
+    void directCancellationInProgressPreventsEnqueue() throws Exception {
+        try (Fixture f = new Fixture(false, false)) {
+            var request = f.context(25030L);
+            var cancellationRecorded = new CountDownLatch(1);
+            var allowCleanup = new CountDownLatch(1);
+            org.mockito.Mockito.doNothing().when(f.scheduler).scheduleRequest(request);
+            var response = f.requests.submit(request);
+            org.mockito.Mockito.doCallRealMethod().when(f.scheduler).scheduleRequest(request);
+            doAnswer(
+                            call -> {
+                                cancellationRecorded.countDown();
+                                RequestProtocolTestSupport.await(allowCleanup);
+                                return call.callRealMethod();
+                            })
+                    .when(f.scheduler)
+                    .processPendingRequestActions(same(request));
+            var cancellation =
+                    CompletableFuture.runAsync(
+                            () -> f.requests.cancel(request, CancelReason.CLIENT_CANCELLED));
+            try {
+                RequestProtocolTestSupport.await(cancellationRecorded);
+                assertFalse(response.isDone());
+                f.scheduler.scheduleRequest(request);
+                var pending = (Collection<?>) ReflectionTestUtils.getField(f.scheduler, "pending");
+                synchronized (pending) {
+                    assertFalse(pending.contains(request));
+                }
+            } finally {
+                allowCleanup.countDown();
+                cancellation.get(3, TimeUnit.SECONDS);
+            }
+            assertEquals(
+                    StrategyErrorType.REQUEST_CANCELLED.getErrorCode(),
+                    response.get(3, TimeUnit.SECONDS).getCode());
+            verify(f.router, org.mockito.Mockito.never()).selectAndRegister(any(), any());
+        }
+    }
+
+    @Test
+    void directCancellationRemovesPendingRequest() throws Exception {
+        try (Fixture f = new Fixture(false)) {
+            int slots = Math.clamp(Runtime.getRuntime().availableProcessors(), 2, 8);
+            var selectionsStarted = new CountDownLatch(slots);
+            var releaseSelections = new CountDownLatch(1);
+            when(f.router.selectAndRegister(any(), any()))
+                    .thenAnswer(
+                            call -> {
+                                selectionsStarted.countDown();
+                                RequestProtocolTestSupport.await(releaseSelections);
+                                return rejection();
+                            });
+            var request = f.context(25031L);
+            try {
+                for (int i = 0; i < slots; i++) {
+                    f.requests.submit(f.context(25040L + i));
+                }
+                RequestProtocolTestSupport.await(selectionsStarted);
+                var response = f.requests.submit(request);
+                var pending = (Collection<?>) ReflectionTestUtils.getField(f.scheduler, "pending");
+                synchronized (pending) {
+                    assertTrue(pending.contains(request));
+                }
+                f.requests.cancel(request, CancelReason.CLIENT_CANCELLED);
+                assertEquals(
+                        StrategyErrorType.REQUEST_CANCELLED.getErrorCode(),
+                        response.get(3, TimeUnit.SECONDS).getCode());
+                synchronized (pending) {
+                    assertFalse(pending.contains(request));
+                }
+            } finally {
+                releaseSelections.countDown();
+            }
+            assertTrue(f.scheduler.awaitStopped(System.nanoTime() + TimeUnit.SECONDS.toNanos(3)));
+            verify(f.router, org.mockito.Mockito.never()).selectAndRegister(same(request), any());
         }
     }
 

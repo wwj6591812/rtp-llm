@@ -264,17 +264,21 @@ public final class RequestContext implements org.flexlb.worker.endpoint.WorkerRe
      * Starts selection only while this registered request is still waiting for its first route.
      */
     synchronized SelectionAttempt beginRouteSelection() {
-        if (registeredRequestId == null
-                || endState != null
-                || cancellationReason != null
-                || pendingEndEvent != null
-                || activeSelectionId != 0
-                || route != null) return null;
+        if (!canBeginRouteSelection()) return null;
         long id = SELECTION_IDS.incrementAndGet();
         checkState(id > 0, "selection id exhausted");
         activeSelectionId = id;
         schedulingDiagnostics = null;
         return new SelectionAttempt(this, id);
+    }
+
+    synchronized boolean canBeginRouteSelection() {
+        return registeredRequestId != null
+                && endState == null
+                && cancellationReason == null
+                && pendingEndEvent == null
+                && activeSelectionId == 0
+                && route == null;
     }
 
     synchronized boolean bindResourceWait(

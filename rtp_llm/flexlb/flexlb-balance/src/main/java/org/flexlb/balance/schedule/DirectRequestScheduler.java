@@ -99,6 +99,7 @@ public class DirectRequestScheduler extends AbstractRequestScheduler {
         if (!checkRequestMode(context, false)) return;
         boolean accepting;
         synchronized (pending) {
+            if (!context.canBeginRouteSelection()) return;
             accepting = !stopped;
             if (accepting) pending.add(context);
         }
