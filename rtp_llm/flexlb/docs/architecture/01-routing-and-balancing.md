@@ -128,6 +128,9 @@ EPD 的 Encoder 与 Generation 分阶段请求；本次选点登记变更不扩�
 master forwarding 透传 protobuf 响应。物理地址字段与既有 service path 不变，旧客户端可忽略
 新增字段。
 
+Follower 转发 `Schedule`、`Cancel` 和 `GetRequestState` 时携带原请求的 gRPC metadata，
+包括自定义键、重复值和二进制值。转发 span 有有效的 W3C trace context 时，由该 span 注入下一跳的追踪字段。
+
 ## 发布、失败和清理
 
 Direct 和 Queued 各自实现 `selectAndPublish(request, selection)`，在同一调用中开始选路、执行策略、

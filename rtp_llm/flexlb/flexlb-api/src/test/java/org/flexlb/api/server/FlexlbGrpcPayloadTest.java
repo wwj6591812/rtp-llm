@@ -74,7 +74,7 @@ class FlexlbGrpcPayloadTest {
                         serverGroup,
                         new org.flexlb.util.metrics.GrpcReporter(NoOpFlexMonitor.getInstance()),
                         new GrpcServerTimingInterceptor(),
-                        new GrpcQosHeaderInterceptor());
+                        new GrpcRequestHeadersInterceptor());
         MasterStatusService election = mock(MasterStatusService.class);
         FlexlbGrpcForwarder forwarder =
                 new FlexlbGrpcForwarder(

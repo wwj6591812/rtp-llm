@@ -1,6 +1,7 @@
 package org.flexlb.api.server;
 
 import io.grpc.ManagedChannel;
+import io.grpc.Metadata;
 import io.grpc.Server;
 import io.grpc.ServerCall;
 import io.grpc.ServerCallHandler;
@@ -8,6 +9,7 @@ import io.grpc.ServerInterceptor;
 import io.grpc.ServerInterceptors;
 import io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.NettyServerBuilder;
+import io.grpc.stub.MetadataUtils;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import org.flexlb.api.ServerScheduleLatencyRecorder;
@@ -18,12 +20,15 @@ import org.flexlb.balance.metrics.RequestSchedulerReporter;
 import org.flexlb.balance.request.Response;
 import org.flexlb.balance.schedule.AbstractRequestScheduler;
 import org.flexlb.balance.schedule.CancelReason;
+import org.flexlb.balance.schedule.RequestContext;
 import org.flexlb.balance.schedule.RequestState;
 import org.flexlb.config.ConfigService;
 import org.flexlb.master.MasterStatusService;
+import org.flexlb.util.PriorityNormalizer;
 import org.flexlb.worker.endpoint.StrategyErrorType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.mockito.ArgumentCaptor;
 
 import java.net.InetSocketAddress;
 import java.time.Duration;
@@ -39,8 +44,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertIterableEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -50,9 +58,62 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Real Netty boundaries for forwarding guards and exact-owner cancellation.
+ * Exercises schedule forwarding, hop guards, and cancellation over real Netty connections.
  */
 class FlexlbForwardHopGuardNettyTest {
+    private static final Metadata.Key<String> CUSTOM_HEADER =
+            Metadata.Key.of("x-flexlb-forward-test", Metadata.ASCII_STRING_MARSHALLER);
+    private static final Metadata.Key<byte[]> BINARY_HEADER =
+            Metadata.Key.of("x-flexlb-forward-test-bin", Metadata.BINARY_BYTE_MARSHALLER);
+
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void forwardingPreservesRequestHeadersAndQosPriority() throws Exception {
+        try (Node follower = Node.start("10.0.0.1");
+                Node master = Node.start("10.0.0.2");
+                Client client = Client.connect(follower.grpcPort())) {
+            master.isMaster.set(true);
+            follower.masterAddress.set(master.httpAddress());
+            Metadata headers = new Metadata();
+            headers.put(
+                    Metadata.Key.of(
+                            PriorityNormalizer.QOS_HEADER_NAME, Metadata.ASCII_STRING_MARSHALLER),
+                    "90");
+            headers.put(CUSTOM_HEADER, "first");
+            headers.put(CUSTOM_HEADER, "second");
+            byte[] binaryValue = {0, 1, (byte) 0xff};
+            headers.put(BINARY_HEADER, binaryValue);
+            var stubWithHeaders =
+                    client.stub.withInterceptors(
+                            MetadataUtils.newAttachHeadersInterceptor(headers));
+
+            assertTrue(stubWithHeaders.schedule(request(72_101L)).getSuccess());
+            assertForwardedHeaders(master.lastRequestHeaders.get(), binaryValue);
+            stubWithHeaders.getRequestState(
+                    FlexlbScheduleProtocol.GetRequestStateRequestPB.newBuilder()
+                            .setRequestId(72_101L)
+                            .build());
+            assertForwardedHeaders(master.lastRequestHeaders.get(), binaryValue);
+            stubWithHeaders.cancel(
+                    FlexlbScheduleProtocol.FlexlbCancelRequestPB.newBuilder()
+                            .setRequestId(72_101L)
+                            .build());
+            assertForwardedHeaders(master.lastRequestHeaders.get(), binaryValue);
+            assertEquals(3, master.inboundCalls.get());
+            assertTrue(
+                    stubWithHeaders
+                            .schedule(request(72_102L).toBuilder().setPriority(70).build())
+                            .getSuccess());
+            assertTrue(client.stub.schedule(request(72_103L)).getSuccess());
+            assertNull(master.lastRequestHeaders.get().get(CUSTOM_HEADER));
+
+            var requests = ArgumentCaptor.forClass(RequestContext.class);
+            verify(master.requestScheduler, times(3)).submit(requests.capture());
+            assertEquals(
+                    List.of(90, 70, 50),
+                    requests.getAllValues().stream().map(RequestContext::getPriority).toList());
+        }
+    }
 
     @Test
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
@@ -364,6 +425,11 @@ class FlexlbForwardHopGuardNettyTest {
         }
     }
 
+    private static void assertForwardedHeaders(Metadata headers, byte[] binaryValue) {
+        assertIterableEquals(List.of("first", "second"), headers.getAll(CUSTOM_HEADER));
+        assertArrayEquals(binaryValue, headers.get(BINARY_HEADER));
+    }
+
     private static FlexlbScheduleProtocol.FlexlbScheduleRequestPB request(long requestId) {
         return FlexlbScheduleProtocol.FlexlbScheduleRequestPB.newBuilder()
                 .setRequestId(requestId)
@@ -409,13 +475,14 @@ class FlexlbForwardHopGuardNettyTest {
     }
 
     /**
-     * Runs one forwarding-test server and exposes its addresses and executor completion.
+     * Runs one forwarding-test server and exposes received headers and executor completion.
      */
     private static final class Node implements AutoCloseable {
         private final AtomicReference<String> masterAddress = new AtomicReference<>();
         private final AtomicBoolean isMaster = new AtomicBoolean(false);
         private final AtomicInteger inboundCalls = new AtomicInteger();
         private final AtomicInteger rejections = new AtomicInteger();
+        private final AtomicReference<Metadata> lastRequestHeaders = new AtomicReference<>();
         private final MasterStatusService consistency;
         private final AbstractRequestScheduler requestScheduler;
         private final AbstractRequestScheduler requestState = mock(AbstractRequestScheduler.class);
@@ -486,13 +553,20 @@ class FlexlbForwardHopGuardNettyTest {
                                 io.grpc.Metadata headers,
                                 ServerCallHandler<ReqT, RespT> next) {
                             inboundCalls.incrementAndGet();
+                            Metadata requestHeaders = new Metadata();
+                            requestHeaders.merge(headers);
+                            lastRequestHeaders.set(requestHeaders);
                             return next.startCall(call, headers);
                         }
                     };
             server =
                     NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
                             .executor(serverExecutor)
-                            .addService(ServerInterceptors.intercept(service, countCalls))
+                            .addService(
+                                    ServerInterceptors.intercept(
+                                            service,
+                                            countCalls,
+                                            new GrpcRequestHeadersInterceptor()))
                             .build()
                             .start();
         }

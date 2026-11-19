@@ -257,7 +257,7 @@ abstract class AbstractRoutePerformanceTest extends FlexLBMockTestBase {
                         serverLoops,
                         null,
                         new GrpcServerTimingInterceptor(),
-                        new GrpcQosHeaderInterceptor());
+                        new GrpcRequestHeadersInterceptor());
         server.start();
         for (int i = 0; i < 4; i++) {
             ManagedChannel channel =

@@ -1230,7 +1230,7 @@ public class FlexlbServiceImpl extends FlexlbServiceGrpc.FlexlbServiceImplBase {
         SchedulingMetadata schedulingMetadata =
                 SchedulingMetadata.of(
                         pb.getPriority(),
-                        GrpcQosHeaderInterceptor.get(),
+                        GrpcRequestHeadersInterceptor.qosLevel(),
                         requestExpiresAtMs,
                         defaultPriority);
         request.rawPriority(pb.getPriority());

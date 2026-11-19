@@ -114,7 +114,7 @@ class FlexlbGrpcServerMonitoringTest {
                         new org.flexlb.util.metrics.GrpcReporter(
                                 new org.flexlb.util.metrics.MicrometerFlexMonitor(registry)),
                         new GrpcServerTimingInterceptor(),
-                        new GrpcQosHeaderInterceptor());
+                        new GrpcRequestHeadersInterceptor());
         try {
             assertDoesNotThrow(server::start);
             var runningServer = (Server) ReflectionTestUtils.getField(server, "server");

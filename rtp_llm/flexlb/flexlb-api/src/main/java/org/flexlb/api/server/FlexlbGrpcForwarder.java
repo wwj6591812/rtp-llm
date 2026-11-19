@@ -27,6 +27,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 import javax.annotation.PreDestroy;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
@@ -44,6 +45,11 @@ import java.util.function.Consumer;
 public class FlexlbGrpcForwarder {
     static final int MAX_FORWARD_HOPS = 1;
     private static final int MAX_ERROR_DETAIL_CHARS = 256;
+
+    private static final Metadata.Key<String> TRACE_PARENT =
+            Metadata.Key.of("traceparent", Metadata.ASCII_STRING_MARSHALLER);
+    private static final Metadata.Key<String> TRACE_STATE =
+            Metadata.Key.of("tracestate", Metadata.ASCII_STRING_MARSHALLER);
 
     /**
      * Bound serialized payloads retained by follower-to-master RPCs.
@@ -153,7 +159,8 @@ public class FlexlbGrpcForwarder {
                 // The forward RPC inherits the inbound gRPC Context deadline. Do
                 // not replace the request TTL with a load-balancer timeout.
                 FlexlbServiceGrpc.FlexlbServiceFutureStub stub =
-                        withTraceHeaders(FlexlbServiceGrpc.newFutureStub(channel), trace.context);
+                        withForwardedHeaders(
+                                FlexlbServiceGrpc.newFutureStub(channel), trace.context);
                 rpcFuture = stub.schedule(forwardedRequest);
             } catch (RuntimeException error) {
                 settleForwardBytes.run();
@@ -304,7 +311,7 @@ public class FlexlbGrpcForwarder {
                                             .getInternalRuntime()
                                             .getMasterForwardRpcTimeoutMs(),
                                     TimeUnit.MILLISECONDS);
-            rpc = withTraceHeaders(stub, trace.context).getRequestState(forwardedRequest);
+            rpc = withForwardedHeaders(stub, trace.context).getRequestState(forwardedRequest);
         } catch (RuntimeException error) {
             try {
                 trace.finish(error);
@@ -499,7 +506,7 @@ public class FlexlbGrpcForwarder {
                         masterHostIpPort);
         try {
             FlexlbServiceGrpc.FlexlbServiceFutureStub stub =
-                    withTraceHeaders(FlexlbServiceGrpc.newFutureStub(channel), trace.context);
+                    withForwardedHeaders(FlexlbServiceGrpc.newFutureStub(channel), trace.context);
             if (deadlineMs != null) {
                 stub = stub.withDeadlineAfter(deadlineMs, TimeUnit.MILLISECONDS);
             }
@@ -715,19 +722,21 @@ public class FlexlbGrpcForwarder {
         return text.substring(0, end).replace('\n', ' ').replace('\r', ' ');
     }
 
-    private static <T extends AbstractStub<T>> T withTraceHeaders(T stub, Context context) {
-        try {
-            Metadata metadata = new Metadata();
-            FlexlbTrace.inject(context)
-                    .forEach(
-                            (key, value) ->
-                                    metadata.put(
-                                            Metadata.Key.of(key, Metadata.ASCII_STRING_MARSHALLER),
-                                            value));
-            return stub.withInterceptors(MetadataUtils.newAttachHeadersInterceptor(metadata));
-        } catch (Throwable ignored) {
-            return stub;
+    private static <T extends AbstractStub<T>> T withForwardedHeaders(
+            T stub, Context traceContext) {
+        Metadata headers = GrpcRequestHeadersInterceptor.copyRequestHeaders();
+        Map<String, String> traceHeaders = FlexlbTrace.inject(traceContext);
+        String traceParent = traceHeaders.get(TRACE_PARENT.name());
+        if (traceParent != null) {
+            headers.discardAll(TRACE_PARENT);
+            headers.discardAll(TRACE_STATE);
+            headers.put(TRACE_PARENT, traceParent);
+            String traceState = traceHeaders.get(TRACE_STATE.name());
+            if (traceState != null) {
+                headers.put(TRACE_STATE, traceState);
+            }
         }
+        return stub.withInterceptors(MetadataUtils.newAttachHeadersInterceptor(headers));
     }
 
     /**

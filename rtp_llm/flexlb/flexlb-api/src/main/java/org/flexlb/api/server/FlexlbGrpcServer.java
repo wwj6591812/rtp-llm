@@ -50,7 +50,7 @@ public class FlexlbGrpcServer implements ExecutorStats {
     private final EventLoopGroup grpcServerEventLoopGroup;
     private final GrpcReporter grpcReporter;
     private final GrpcServerTimingInterceptor grpcServerTimingInterceptor;
-    private final GrpcQosHeaderInterceptor grpcQosHeaderInterceptor;
+    private final GrpcRequestHeadersInterceptor grpcRequestHeadersInterceptor;
 
     private Server server;
     private NioEventLoopGroup bossGroup;
@@ -66,7 +66,7 @@ public class FlexlbGrpcServer implements ExecutorStats {
             @Qualifier("grpcServerEventLoopGroup") EventLoopGroup grpcServerEventLoopGroup,
             GrpcReporter grpcReporter,
             GrpcServerTimingInterceptor grpcServerTimingInterceptor,
-            GrpcQosHeaderInterceptor grpcQosHeaderInterceptor) {
+            GrpcRequestHeadersInterceptor grpcRequestHeadersInterceptor) {
         this.flexlbServiceImpl = flexlbServiceImpl;
         this.configService = configService;
         this.environment = environment;
@@ -79,7 +79,7 @@ public class FlexlbGrpcServer implements ExecutorStats {
         this.grpcServerEventLoopGroup = grpcServerEventLoopGroup;
         this.grpcReporter = grpcReporter == null ? new GrpcReporter(null) : grpcReporter;
         this.grpcServerTimingInterceptor = grpcServerTimingInterceptor;
-        this.grpcQosHeaderInterceptor = grpcQosHeaderInterceptor;
+        this.grpcRequestHeadersInterceptor = grpcRequestHeadersInterceptor;
     }
 
     @PostConstruct
@@ -175,7 +175,7 @@ public class FlexlbGrpcServer implements ExecutorStats {
                                         flexlbServiceImpl,
                                         new GrpcTraceInterceptor(),
                                         grpcServerTimingInterceptor,
-                                        grpcQosHeaderInterceptor))
+                                        grpcRequestHeadersInterceptor))
                         .maxInboundMessageSize(
                                 org.flexlb.util.network.GrpcConstants.MAX_MESSAGE_SIZE)
                         .flowControlWindow(4 * 1024 * 1024)
