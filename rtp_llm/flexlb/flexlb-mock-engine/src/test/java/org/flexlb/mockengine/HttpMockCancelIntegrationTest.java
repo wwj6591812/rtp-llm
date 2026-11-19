@@ -36,6 +36,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
 
 /**
  * Cross-process 8429 wiring integration test (C1 three-piece set, self-test
@@ -287,8 +288,10 @@ class HttpMockCancelIntegrationTest {
 
     @Test
     void httpWrongWorkerDoesNotScanOtherServices() throws Exception {
-        startGatedDecodeCluster(false);
+        // Keep the request running until the HTTP cancellation result has been checked.
+        startGatedDecodeCluster(false, mock(ScheduledExecutorService.class));
         assertTrue(scheduleOwnedDecode(23L));
+        assertEquals(1, decodeService.getInflightCount());
 
         int wrongPort = BASE_PORT + nextPortOffset++;
         JavaMockEngineCluster.FastRpcService wrongPrefill =
@@ -323,8 +326,10 @@ class HttpMockCancelIntegrationTest {
 
     @Test
     void httpDecodeTargetIsUnimplementedAndDoesNotCancelOwnedRequest() throws Exception {
-        startGatedDecodeCluster(false);
+        // Keep the request running until the HTTP cancellation result has been checked.
+        startGatedDecodeCluster(false, mock(ScheduledExecutorService.class));
         assertTrue(scheduleOwnedDecode(24L));
+        assertEquals(1, decodeService.getInflightCount());
 
         var future =
                 channel()
@@ -646,6 +651,12 @@ class HttpMockCancelIntegrationTest {
      * keeps requests in flight during asserts.
      */
     private void startGatedDecodeCluster(boolean reportQueuedAsKvAllocated) throws Exception {
+        startGatedDecodeCluster(reportQueuedAsKvAllocated, scheduler);
+    }
+
+    private void startGatedDecodeCluster(
+            boolean reportQueuedAsKvAllocated, ScheduledExecutorService decodeScheduler)
+            throws Exception {
         MockPerformanceModel model = model(10_000.0, reportQueuedAsKvAllocated);
         int prefillPort = BASE_PORT + nextPortOffset++;
         prefillService =
@@ -672,7 +683,7 @@ class HttpMockCancelIntegrationTest {
                         EngineRpcService.RoleTypePB.ROLE_TYPE_DECODE,
                         port,
                         services,
-                        scheduler,
+                        decodeScheduler,
                         model,
                         100,
                         new JavaMockEngineCluster.ClusterStats(),
