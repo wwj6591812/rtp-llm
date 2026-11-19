@@ -161,6 +161,8 @@ scheduleRequestCleanup 统一安排执行顺序：Endpoint 关闭先发布响应
 ## Decode 抢占与取消
 
 Decode 抢占由具体 DecodePreemptionPlanner 选择请求，DefaultRequestPreemption 执行普通取消并等待 Endpoint 的容量变化。
+DefaultRequestPreemption 报告等待结果是否就绪，并在登记新的抢占等待或收到相关 Endpoint 的容量通知时递增版本。
+QueuedRequestScheduler 在版本变化或定时检查到期时重新检查当前等待，并在有空闲规划线程时派发本轮剩余的检查。
 RequestContext 不保留独立抢占事务、取消阶段或恢复交付协议。
 EngineCancellation 向原引擎发送单请求 Cancel，处理有界重试和晚到回复；一轮耗尽后仍保留精确路由，
 由定时恢复入口继续下一轮。关闭时停止恢复并等待已提交回调。

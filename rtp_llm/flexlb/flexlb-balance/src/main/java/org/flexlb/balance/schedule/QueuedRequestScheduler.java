@@ -21,7 +21,6 @@ import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -32,7 +31,7 @@ import static com.google.common.base.Preconditions.checkState;
 
 /**
  * Scans queued requests on notification or a fixed interval and submits bounded, concurrent routing tasks.
- * Preemption owns resource waits; its ready checks and result handling use the same execution slots.
+ * Preemption owns resource waits, and the scheduler tracks the version covered by each check.
  * Closing ends queued requests and waits for all accepted tasks and resource cleanup before stopping the pool.
  */
 public class QueuedRequestScheduler extends AbstractRequestScheduler {
@@ -55,6 +54,7 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
     private final CapacityNotifier.Listener capacityListener;
 
     private boolean started;
+    private long preemptionVersion;
     private boolean refreshBeforePlanning = true;
     private volatile boolean stopped;
 
@@ -85,7 +85,7 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
         this.waitingRequests = new CapacityWaitQueue();
         this.capacityListener =
                 endpoint -> {
-                    preemption.requestCheck(endpoint);
+                    preemption.onCapacityChanged(endpoint);
                     var capacity = this.router.requestCapacity(endpoint);
                     lock.lock();
                     try {
@@ -136,13 +136,14 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
 
     @Override
     public int blockedRequestCount() {
-        Set<RequestContext> waiting = preemption.waitingRequests();
         lock.lock();
         try {
             int count = orderedQueue.size();
             for (var request : executing.keySet()) if (orderedQueue.contains(request)) count--;
-            for (var request : waiting)
+            for (var work : preemption.pendingWork()) {
+                var request = work.selection().requestContext();
                 if (!executing.containsKey(request) && orderedQueue.contains(request)) count--;
+            }
             return count;
         } finally {
             lock.unlock();
@@ -264,6 +265,7 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
 
     private void run() {
         long nextCheck = System.nanoTime();
+        var checksToSchedule = new ArrayList<RequestPreemption.Work>();
         try {
             while (true) {
                 try {
@@ -272,7 +274,6 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
                     long sampledVersion = 0L;
                     List<WorkerAdmissionCapacity> capacities = List.of();
                     if (periodicCheck) {
-                        preemption.requestPeriodicCheck();
                         nextCheck = now + capacityCheckIntervalNanos;
                         boolean hasWaiters;
                         lock.lock();
@@ -292,7 +293,7 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
                             waitingRequests.checkCapacity(capacities, sampledVersion);
                             orderedQueue.beginScan();
                         }
-                        tasks = chooseTasks();
+                        tasks = chooseTasks(periodicCheck, checksToSchedule);
                         if (tasks.isEmpty()) {
                             if (!stopped
                                     && executing.size() < plannerCount
@@ -318,15 +319,30 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
         }
     }
 
-    private List<SchedulingTask> chooseTasks() {
+    private List<SchedulingTask> chooseTasks(
+            boolean periodicCheck, List<RequestPreemption.Work> checksToSchedule) {
         int slots = plannerCount - executing.size();
-        if (slots == 0) return List.of();
+        if (slots == 0 && !periodicCheck) return List.of();
+
+        boolean checkPreemption = periodicCheck || preemption.isChanged(preemptionVersion);
+        if (checkPreemption) preemptionVersion = preemption.snapshotVersion();
+        var preemptionWork = preemption.pendingWork();
+        if (checkPreemption) {
+            checksToSchedule.clear();
+            checksToSchedule.addAll(preemptionWork);
+        } else {
+            checksToSchedule.retainAll(preemptionWork);
+        }
+
         List<SchedulingTask> tasks = List.of();
-        for (var work : preemption.readyWork()) {
+        for (var work : preemptionWork) {
             if (tasks.size() == slots) break;
-            var request = work.selection().requestContext();
+            var selection = work.selection();
+            var request = selection.requestContext();
             if (executing.containsKey(request)) continue;
-            var task = new SchedulingTask(request, work.action(), work.selection());
+            boolean needsCheck = checksToSchedule.remove(work);
+            if (!work.isResultReady() && !needsCheck) continue;
+            var task = new SchedulingTask(request, work.action(), selection);
             executing.put(request, task);
             if (tasks.isEmpty()) tasks = new ArrayList<>();
             tasks.add(task);
@@ -349,7 +365,6 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
         }
         int remaining = slots - tasks.size();
         if (!stopped && remaining > 0) {
-            var waiting = preemption.waitingRequests();
             long nowMs = System.currentTimeMillis();
             var candidates =
                     orderedQueue.scanForPlanningCandidates(
@@ -360,7 +375,7 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
                                             Math.ceil(remaining * scanBudgetMultiplier)),
                             request ->
                                     !executing.containsKey(request)
-                                            && !waiting.contains(request)
+                                            && !hasPendingPreemption(request, preemptionWork)
                                             && canPlan(request, nowMs)
                                             && waitingRequests.canSchedule(request));
             // Finish the budgeted scan before assigning the sole free slot to another refresh.
@@ -397,6 +412,14 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
                 lock.unlock();
             }
         }
+    }
+
+    private static boolean hasPendingPreemption(
+            RequestContext request, List<RequestPreemption.Work> preemptionWork) {
+        for (var work : preemptionWork) {
+            if (work.selection().requestContext() == request) return true;
+        }
+        return false;
     }
 
     private boolean canPlan(RequestContext request, long nowMs) {
@@ -473,16 +496,17 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
                                         selection,
                                         endpoint,
                                         acquired -> resumeSelection(selection, acquired));
-            }
-            if (waiting) {
-                lock.lock();
-                try {
-                    waitingRequests.remove(request);
-                } finally {
-                    lock.unlock();
+                if (waiting) {
+                    lock.lock();
+                    try {
+                        waitingRequests.remove(request);
+                    } finally {
+                        lock.unlock();
+                    }
                 }
-                recordCapacityWait(request, result);
-            } else handleResult(request, result);
+            }
+            if (waiting) recordCapacityWait(request, result);
+            else handleResult(request, result);
         } finally {
             if (selectionReturned
                     && !waiting

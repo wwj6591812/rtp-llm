@@ -15,7 +15,9 @@ import org.flexlb.worker.endpoint.DecodeResources.AdmissionCapacity;
 import org.flexlb.worker.endpoint.DecodeResources.DecodeRequestView;
 import org.flexlb.worker.endpoint.WorkerEndpoint;
 
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -39,10 +41,12 @@ final class DefaultRequestPreemption implements RequestPreemption {
 
     private final int limit;
 
-    private final Map<RequestContext.SelectionAttempt, Pending> pending = new HashMap<>();
+    private final Map<RequestContext.SelectionAttempt, DecodePreemptionWait> decodePreemptionWaits =
+            new HashMap<>();
 
     private volatile Runnable wakeup = () -> {};
 
+    private volatile long version;
     private boolean stopped;
 
     DefaultRequestPreemption(
@@ -72,7 +76,7 @@ final class DefaultRequestPreemption implements RequestPreemption {
     public boolean start(
             RequestContext.SelectionAttempt selection,
             WorkerEndpoint target,
-            Consumer<RoleSelection> handler) {
+            Consumer<RoleSelection> resultHandler) {
         var request = selection.requestContext();
         if (!(target instanceof DecodeEndpoint endpoint)
                 || preemption == null
@@ -82,7 +86,7 @@ final class DefaultRequestPreemption implements RequestPreemption {
                 planDecodePreemption(
                         request.getRequest(), request.getSchedulingMetadata(), endpoint);
         if (proposal == null) return false;
-        var wait =
+        var resourceWait =
                 endpoint.createResourceWait(
                         request,
                         selection.id(),
@@ -91,24 +95,26 @@ final class DefaultRequestPreemption implements RequestPreemption {
                         request.getRequest().getHardKvTokens(),
                         request.getRequest().getExpectedKvTokens(),
                         capacity);
-        var accepted = new Pending(selection, endpoint, wait, handler);
+        var preemptionWait = new DecodePreemptionWait(endpoint, resourceWait);
         synchronized (this) {
-            if (stopped || pending.size() >= limit || pending.containsKey(selection)) return false;
-            pending.put(selection, accepted);
+            if (stopped
+                    || decodePreemptionWaits.size() >= limit
+                    || decodePreemptionWaits.containsKey(selection)) return false;
+            decodePreemptionWaits.put(selection, preemptionWait);
         }
         try {
-            if (!request.bindResourceWait(selection, wait)
-                    || !endpoint.registerResourceWait(wait)) {
-                request.clearResourceWait(wait);
-                endpoint.removeResourceWait(wait);
+            if (!request.bindResourceWait(selection, resourceWait)
+                    || !endpoint.registerResourceWait(resourceWait)) {
+                request.clearResourceWait(resourceWait);
+                endpoint.removeResourceWait(resourceWait);
                 return true;
             }
-            wait.result().whenComplete((resource, failure) -> wakeup.run());
-            endpoint.tryAcquire(wait);
-            if (!wait.isDone()) {
+            resourceWait.result().whenComplete((resource, failure) -> wakeup.run());
+            endpoint.tryAcquire(resourceWait);
+            if (!resourceWait.isDone()) {
                 recordDecodePlanObservability(request, proposal);
                 for (var selected : proposal.requestsToPreempt()) {
-                    if (!endpoint.isResourceWaitEffective(wait, System.currentTimeMillis())
+                    if (!endpoint.isResourceWaitEffective(resourceWait, System.currentTimeMillis())
                             || admissionStopped()) break;
                     var victim = requests.findActive(selected.requestId());
                     if (victim == null) continue;
@@ -117,64 +123,72 @@ final class DefaultRequestPreemption implements RequestPreemption {
                             || route.decodeEndpoint() != endpoint
                             || route.decodeRegistration() != selected.reservation()) continue;
                     victim.getRequestScheduler().cancel(victim, CancelReason.PRIORITY_PREEMPTED);
-                    endpoint.tryAcquire(wait);
-                    if (wait.isDone()) break;
+                    endpoint.tryAcquire(resourceWait);
+                    if (resourceWait.isDone()) break;
                 }
             }
             return true;
         } catch (RuntimeException | Error failure) {
-            request.clearResourceWait(wait);
-            endpoint.removeResourceWait(wait);
+            request.clearResourceWait(resourceWait);
+            endpoint.removeResourceWait(resourceWait);
             throw failure;
         } finally {
             synchronized (this) {
-                accepted.installing = false;
-                accepted.checkRequested = true;
+                preemptionWait.checkAndDeliverTask =
+                        new Work(
+                                selection,
+                                () ->
+                                        checkWaitAndDeliverResult(
+                                                selection, preemptionWait, resultHandler),
+                                resourceWait::isDone);
+                version++;
             }
             wakeup.run();
         }
     }
 
     @Override
-    public synchronized List<Work> readyWork() {
-        if (pending.isEmpty()) return List.of();
-        var work = new java.util.ArrayList<Work>();
-        for (var item : pending.values()) {
-            if (!item.installing && (item.checkRequested || item.wait.isDone()))
-                work.add(new Work(item.selection, () -> process(item)));
+    public synchronized List<Work> pendingWork() {
+        if (decodePreemptionWaits.isEmpty()) return List.of();
+        var tasks = new java.util.ArrayList<Work>();
+        for (var preemptionWait : decodePreemptionWaits.values()) {
+            if (preemptionWait.checkAndDeliverTask != null) {
+                tasks.add(preemptionWait.checkAndDeliverTask);
+            }
         }
-        return work;
+        return tasks;
     }
 
     @Override
-    public void requestCheck(WorkerEndpoint endpoint) {
-        synchronized (this) {
-            for (var item : pending.values())
-                if (item.endpoint == endpoint) item.checkRequested = true;
+    public synchronized void onCapacityChanged(WorkerEndpoint endpoint) {
+        for (var preemptionWait : decodePreemptionWaits.values()) {
+            if (preemptionWait.endpoint == endpoint) {
+                version++;
+                return;
+            }
         }
     }
 
     @Override
-    public void requestPeriodicCheck() {
-        synchronized (this) {
-            for (var item : pending.values()) item.checkRequested = true;
-        }
+    public long snapshotVersion() {
+        return version;
     }
 
     @Override
     public void cancel(RequestContext request) {
-        List<Pending> affected;
+        List<DecodePreemptionWait> waitsToCancel;
         synchronized (this) {
-            affected =
-                    pending.values().stream()
-                            .filter(item -> item.selection.requestContext() == request)
+            waitsToCancel =
+                    decodePreemptionWaits.entrySet().stream()
+                            .filter(entry -> entry.getKey().requestContext() == request)
+                            .map(Map.Entry::getValue)
                             .toList();
         }
-        for (var item : affected) {
-            request.clearResourceWait(item.wait);
-            item.endpoint.removeResourceWait(item.wait);
+        for (var preemptionWait : waitsToCancel) {
+            request.clearResourceWait(preemptionWait.resourceWait);
+            preemptionWait.endpoint.removeResourceWait(preemptionWait.resourceWait);
         }
-        if (!affected.isEmpty()) wakeup.run();
+        if (!waitsToCancel.isEmpty()) wakeup.run();
     }
 
     @Override
@@ -185,63 +199,59 @@ final class DefaultRequestPreemption implements RequestPreemption {
 
     @Override
     public void stopAdmission() {
-        List<RequestContext> requests;
+        var requests = Collections.newSetFromMap(new IdentityHashMap<RequestContext, Boolean>());
         synchronized (this) {
             stopped = true;
-            requests = List.copyOf(waitingRequests());
+            for (var selection : decodePreemptionWaits.keySet()) {
+                requests.add(selection.requestContext());
+            }
         }
         requests.forEach(this::cancel);
     }
 
     @Override
-    public synchronized Set<RequestContext> waitingRequests() {
-        if (pending.isEmpty()) return Set.of();
-        var requests =
-                java.util.Collections.newSetFromMap(
-                        new java.util.IdentityHashMap<RequestContext, Boolean>());
-        for (var item : pending.keySet()) requests.add(item.requestContext());
-        return requests;
-    }
-
-    @Override
     public synchronized boolean isIdle() {
-        return pending.isEmpty();
+        return decodePreemptionWaits.isEmpty();
     }
 
     private synchronized boolean admissionStopped() {
         return stopped;
     }
 
-    private void process(Pending item) {
+    private void checkWaitAndDeliverResult(
+            RequestContext.SelectionAttempt selection,
+            DecodePreemptionWait preemptionWait,
+            Consumer<RoleSelection> resultHandler) {
         synchronized (this) {
-            if (pending.get(item.selection) != item || item.installing) return;
-            item.checkRequested = false;
+            if (decodePreemptionWaits.get(selection) != preemptionWait) return;
         }
-        var request = item.selection.requestContext();
-        if (!item.wait.isDone()) {
-            if (!item.endpoint.isResourceWaitEffective(item.wait, System.currentTimeMillis())) {
-                request.clearResourceWait(item.wait);
-                item.endpoint.removeResourceWait(item.wait);
-            } else item.endpoint.tryAcquire(item.wait);
+        var request = selection.requestContext();
+        var endpoint = preemptionWait.endpoint;
+        var resourceWait = preemptionWait.resourceWait;
+        if (!resourceWait.isDone()) {
+            if (!endpoint.isResourceWaitEffective(resourceWait, System.currentTimeMillis())) {
+                request.clearResourceWait(resourceWait);
+                endpoint.removeResourceWait(resourceWait);
+            } else endpoint.tryAcquire(resourceWait);
         }
-        if (!item.wait.isDone()) return;
-        var resource = item.wait.result().toCompletableFuture().join();
-        request.clearResourceWait(item.wait);
+        if (!resourceWait.isDone()) return;
+        var resource = resourceWait.result().toCompletableFuture().join();
+        request.clearResourceWait(resourceWait);
         try {
             RoleSelection acquired = null;
             if (resource != null) {
                 try {
-                    var view = item.endpoint.selectionSnapshot();
-                    acquired = RoleSelection.decode(item.endpoint, view.topology(), resource);
+                    var view = endpoint.selectionSnapshot();
+                    acquired = RoleSelection.decode(endpoint, view.topology(), resource);
                 } catch (RuntimeException | Error failure) {
-                    item.endpoint.rollbackSelection(resource);
+                    endpoint.rollbackSelection(resource);
                     throw failure;
                 }
             }
-            item.handler.accept(acquired);
+            resultHandler.accept(acquired);
         } finally {
             synchronized (this) {
-                pending.remove(item.selection, item);
+                decodePreemptionWaits.remove(selection, preemptionWait);
             }
             wakeup.run();
         }
@@ -362,25 +372,19 @@ final class DefaultRequestPreemption implements RequestPreemption {
     }
 
     /**
-     * Keeps the exact selection and shared endpoint wait until installation and result cleanup finish.
+     * Tracks the Decode endpoint and its resource wait until the result has been delivered.
+     * The check and delivery task is published under the preemption monitor after installation.
      */
-    private static final class Pending {
-        private final RequestContext.SelectionAttempt selection;
+    private static final class DecodePreemptionWait {
         private final DecodeEndpoint endpoint;
-        private final DecodeEndpoint.ResourceWait wait;
-        private final Consumer<RoleSelection> handler;
-        private boolean installing = true;
-        private boolean checkRequested;
+        private final DecodeEndpoint.ResourceWait resourceWait;
 
-        private Pending(
-                RequestContext.SelectionAttempt selection,
-                DecodeEndpoint endpoint,
-                DecodeEndpoint.ResourceWait wait,
-                Consumer<RoleSelection> handler) {
-            this.selection = selection;
+        private Work checkAndDeliverTask;
+
+        private DecodePreemptionWait(
+                DecodeEndpoint endpoint, DecodeEndpoint.ResourceWait resourceWait) {
             this.endpoint = endpoint;
-            this.wait = wait;
-            this.handler = handler;
+            this.resourceWait = resourceWait;
         }
     }
 }

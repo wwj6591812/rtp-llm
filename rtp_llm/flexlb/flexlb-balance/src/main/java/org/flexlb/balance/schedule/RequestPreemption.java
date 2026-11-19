@@ -4,7 +4,7 @@ import org.flexlb.balance.strategy.RoleSelection;
 import org.flexlb.worker.endpoint.WorkerEndpoint;
 
 import java.util.List;
-import java.util.Set;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 /**
@@ -19,13 +19,20 @@ public interface RequestPreemption extends AutoCloseable {
             WorkerEndpoint endpoint,
             Consumer<RoleSelection> resultHandler);
 
-    List<Work> readyWork();
+    /**
+     * Returns work for installed waits. The scheduler decides when to run each task.
+     */
+    List<Work> pendingWork();
 
-    Set<RequestContext> waitingRequests();
+    default void onCapacityChanged(WorkerEndpoint endpoint) {}
 
-    void requestCheck(WorkerEndpoint endpoint);
+    default boolean isChanged(long snapshotVersion) {
+        return snapshotVersion() != snapshotVersion;
+    }
 
-    void requestPeriodicCheck();
+    default long snapshotVersion() {
+        return 0L;
+    }
 
     void cancel(RequestContext request);
 
@@ -36,5 +43,19 @@ public interface RequestPreemption extends AutoCloseable {
     @Override
     void close();
 
-    record Work(RequestContext.SelectionAttempt selection, Runnable action) {}
+    /**
+     * Exposes the work for a resource wait and whether its result is ready to be delivered.
+     */
+    record Work(
+            RequestContext.SelectionAttempt selection,
+            Runnable action,
+            BooleanSupplier resultReady) {
+        public Work(RequestContext.SelectionAttempt selection, Runnable action) {
+            this(selection, action, () -> true);
+        }
+
+        public boolean isResultReady() {
+            return resultReady.getAsBoolean();
+        }
+    }
 }

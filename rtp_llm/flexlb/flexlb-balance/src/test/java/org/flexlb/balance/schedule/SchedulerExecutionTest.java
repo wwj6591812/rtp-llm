@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -68,6 +69,7 @@ class SchedulerExecutionTest {
         var waiting =
                 (CapacityWaitQueue) ReflectionTestUtils.getField(scheduler, "waitingRequests");
         var executing = (Map<?, ?>) ReflectionTestUtils.getField(scheduler, "executing");
+        var checksToSchedule = new ArrayList<RequestPreemption.Work>();
         var first = RequestProtocolTestSupport.context(SchedulingTestConfig.newConfig(), 99020L);
         var waiter = RequestProtocolTestSupport.context(SchedulingTestConfig.newConfig(), 99021L);
         var worker = CapacityKey.exact(RoleType.PREFILL, "g", "worker-a");
@@ -90,17 +92,19 @@ class SchedulerExecutionTest {
             waiting.park(waiter, worker, Set.of());
             notifications.notifyChanged(endpoint);
 
-            ReflectionTestUtils.invokeMethod(scheduler, "chooseTasks");
+            ReflectionTestUtils.invokeMethod(scheduler, "chooseTasks", false, checksToSchedule);
             assertEquals(Set.of(first), executing.keySet(), "the FIFO head takes the only planner");
 
             notifications.notifyChanged(endpoint);
             scheduler.removeRequest(first);
             executing.remove(first);
-            List<?> next = ReflectionTestUtils.invokeMethod(scheduler, "chooseTasks");
+            List<?> next =
+                    ReflectionTestUtils.invokeMethod(
+                            scheduler, "chooseTasks", false, checksToSchedule);
             assertEquals(List.of(), next, "an unused retry slot must not survive its withdrawal");
 
             notifications.notifyChanged(endpoint);
-            ReflectionTestUtils.invokeMethod(scheduler, "chooseTasks");
+            ReflectionTestUtils.invokeMethod(scheduler, "chooseTasks", false, checksToSchedule);
             assertEquals(Set.of(waiter), executing.keySet(), "fresh capacity lets the waiter run");
         } finally {
             SchedulerTestSupport.shutdown(SchedulerTestSupport.runtime(lifecycle));

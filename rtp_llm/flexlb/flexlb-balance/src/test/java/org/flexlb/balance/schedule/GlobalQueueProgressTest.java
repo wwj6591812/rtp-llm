@@ -211,7 +211,7 @@ class GlobalQueueProgressTest {
                                             ReflectionTestUtils.getField(f.scheduler, "lock");
                             queueLock.lock();
                             try {
-                                return f.eviction.waitingRequests().size() == 1;
+                                return f.eviction.pendingCount() == 1;
                             } finally {
                                 queueLock.unlock();
                             }
@@ -1460,7 +1460,7 @@ class GlobalQueueProgressTest {
             var queueLock = (ReentrantLock) ReflectionTestUtils.getField(scheduler, "lock");
             queueLock.lock();
             try {
-                return !(eviction.waitingRequests().size() == 0);
+                return !eviction.isIdle();
             } finally {
                 queueLock.unlock();
             }

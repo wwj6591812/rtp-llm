@@ -31,12 +31,10 @@ import static org.mockito.Mockito.when;
  */
 class DefaultRequestPreemptionTest {
     @Test
-    void noPreemptionWaitersReuseEmptyResults() {
+    void noPreemptionWaitersReuseEmptyWorkList() {
         try (var f = new Fixture()) {
             org.junit.jupiter.api.Assertions.assertSame(
-                    f.preemption.readyWork(), f.preemption.readyWork());
-            org.junit.jupiter.api.Assertions.assertSame(
-                    f.preemption.waitingRequests(), f.preemption.waitingRequests());
+                    f.preemption.pendingWork(), f.preemption.pendingWork());
         }
     }
 
@@ -47,6 +45,19 @@ class DefaultRequestPreemptionTest {
             f.preemption.setWakeup(wakeups::incrementAndGet);
             f.preemption.cancel(f.request);
             assertEquals(0, wakeups.get());
+        }
+    }
+
+    @Test
+    void pendingWorkReportsWhenAResultNeedsDelivery() {
+        try (var f = new Fixture()) {
+            assertTrue(f.preemption.start(f.selection, f.endpoint, f.acquired::set));
+            var work = f.preemption.pendingWork().getFirst();
+            assertFalse(work.isResultReady());
+            f.preemption.cancel(f.request);
+            assertTrue(work.isResultReady());
+            work.action().run();
+            assertTrue(f.preemption.isIdle());
         }
     }
 
@@ -209,8 +220,7 @@ class DefaultRequestPreemptionTest {
         }
 
         private void runChecks() {
-            preemption.requestPeriodicCheck();
-            for (var work : preemption.readyWork()) work.action().run();
+            for (var work : preemption.pendingWork()) work.action().run();
         }
 
         private DecodeEndpoint.RequestRegistration register(String id, int priority) {

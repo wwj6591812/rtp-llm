@@ -7,6 +7,7 @@ import org.flexlb.balance.request.Response;
 import org.flexlb.balance.requestlog.TheoryCacheHitReporter;
 import org.flexlb.balance.schedule.ResponseCompletionExecutor.RequestFuture;
 import org.flexlb.balance.strategy.RequestRouteSelector;
+import org.flexlb.balance.strategy.RoleSelection;
 import org.flexlb.balance.strategy.SelectionResult;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.ConfigTestSupport;
@@ -19,6 +20,7 @@ import org.flexlb.worker.endpoint.CapacityNotifier;
 import org.flexlb.worker.endpoint.EndpointRegistry;
 import org.flexlb.worker.endpoint.PrefillEndpoint;
 import org.flexlb.worker.endpoint.StrategyErrorType;
+import org.flexlb.worker.endpoint.WorkerAdmissionCapacity;
 import org.flexlb.worker.endpoint.WorkerEndpoint.CommitStatus;
 import org.flexlb.worker.rpc.EngineGrpcClient;
 import org.junit.jupiter.api.Test;
@@ -38,7 +40,11 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Consumer;
 import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -256,7 +262,7 @@ class RequestSchedulerContractTest {
                                 ready.set(false);
                                 resumed.countDown();
                             });
-            when(preemption.readyWork())
+            when(preemption.pendingWork())
                     .thenAnswer(
                             call -> {
                                 if (firstSnapshot.getAndSet(false)) {
@@ -282,6 +288,69 @@ class RequestSchedulerContractTest {
                     resumed.await(2, TimeUnit.SECONDS),
                     "Ready preemption work must run before the next capacity check");
             notifier.join();
+        }
+    }
+
+    @Test
+    void schedulerRechecksAfterCapacityChangesDuringPreemptionCheck() throws Exception {
+        var config = SchedulingTestConfig.newConfig();
+        SchedulingTestConfig.useFifoQueue(config).setCapacityCheckIntervalMs(30_000L);
+        try (Fixture f = new Fixture(config, false)) {
+            var preemption =
+                    (RequestPreemption) ReflectionTestUtils.getField(f.scheduler, "preemption");
+            var endpoint = SchedulerTestSupport.mockDecodeEndpoint();
+            var blocker = new CapacityKey(RoleType.DECODE, "group", "decode");
+            var request = f.context(25003L);
+            var work = new AtomicReference<RequestPreemption.Work>();
+            var checks = new AtomicInteger();
+            var version = new AtomicLong();
+
+            when(preemption.snapshotVersion()).thenAnswer(call -> version.get());
+            when(preemption.isChanged(anyLong())).thenCallRealMethod();
+            doAnswer(
+                            call -> {
+                                version.incrementAndGet();
+                                return null;
+                            })
+                    .when(preemption)
+                    .onCapacityChanged(endpoint);
+            when(f.router.selectAndRegister(any(), any()))
+                    .thenReturn(SelectionResult.blocked(blocker), rejection());
+            when(f.router.blockedEndpoint(blocker)).thenReturn(endpoint);
+            when(f.router.requestCapacity(endpoint))
+                    .thenReturn(new WorkerAdmissionCapacity(blocker, 1L, 1L, 1L));
+            when(preemption.pendingWork())
+                    .thenAnswer(
+                            call -> {
+                                var pending = work.get();
+                                return pending == null ? List.of() : List.of(pending);
+                            });
+            when(preemption.start(any(), same(endpoint), any()))
+                    .thenAnswer(
+                            call -> {
+                                RequestContext.SelectionAttempt selection = call.getArgument(0);
+                                Consumer<RoleSelection> resultHandler = call.getArgument(2);
+                                work.set(
+                                        new RequestPreemption.Work(
+                                                selection,
+                                                () -> {
+                                                    assertEquals(
+                                                            0, f.scheduler.blockedRequestCount());
+                                                    if (checks.incrementAndGet() == 1) {
+                                                        f.capacityNotifier.notifyChanged(endpoint);
+                                                    } else {
+                                                        work.set(null);
+                                                        resultHandler.accept(null);
+                                                    }
+                                                },
+                                                () -> false));
+                                version.incrementAndGet();
+                                return true;
+                            });
+
+            f.scheduler.start();
+            assertFalse(f.scheduler.submit(request).get(2, TimeUnit.SECONDS).isSuccess());
+            assertEquals(2, checks.get());
         }
     }
 
@@ -739,7 +808,7 @@ class RequestSchedulerContractTest {
             var preemption =
                     (RequestPreemption) ReflectionTestUtils.getField(f.scheduler, "preemption");
             var rejected = new CompletableFuture<Boolean>();
-            when(preemption.readyWork())
+            when(preemption.pendingWork())
                     .thenAnswer(
                             call -> {
                                 try {
@@ -1225,6 +1294,7 @@ class RequestSchedulerContractTest {
     private static final class Fixture implements AutoCloseable {
         final FlexlbConfig config;
         final RequestRouteSelector router = mock(RequestRouteSelector.class);
+        final CapacityNotifier capacityNotifier = new CapacityNotifier();
         final AbstractRequestScheduler requests;
         final AbstractRequestScheduler scheduler;
 
@@ -1249,7 +1319,7 @@ class RequestSchedulerContractTest {
                             mock(TheoryCacheHitReporter.class),
                             router,
                             org.flexlb.balance.schedule.RequestPreemptionTestSupport.mock(),
-                            new CapacityNotifier(),
+                            capacityNotifier,
                             startPlacement);
             scheduler =
                     ((AbstractRequestScheduler)
