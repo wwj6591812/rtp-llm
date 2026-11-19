@@ -56,7 +56,6 @@ public final class RequestSchedulerTestRuntime implements AutoCloseable {
         this.registry =
                 new EndpointRegistry(
                         configService,
-                        requests,
                         deliveryReporter,
                         capacityNotifier,
                         org.mockito.Mockito.mock(org.flexlb.cache.match.CacheAwareService.class));

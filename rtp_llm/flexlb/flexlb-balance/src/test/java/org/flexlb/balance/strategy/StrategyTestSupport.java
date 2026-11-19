@@ -80,7 +80,6 @@ final class StrategyTestSupport {
     static EndpointRegistry endpointRegistry(ConfigService configService) {
         return new EndpointRegistry(
                 configService,
-                new org.flexlb.balance.schedule.RequestRepository(),
                 Mockito.mock(DeliveryMetricsReporter.class),
                 new CapacityNotifier(),
                 org.mockito.Mockito.mock(org.flexlb.cache.match.CacheAwareService.class));

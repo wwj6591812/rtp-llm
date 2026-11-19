@@ -40,7 +40,6 @@ class EndpointRegistryRoleTest {
         registry =
                 new EndpointRegistry(
                         config,
-                        new org.flexlb.balance.schedule.RequestRepository(),
                         mock(org.flexlb.balance.metrics.DeliveryMetricsReporter.class),
                         availability,
                         org.mockito.Mockito.mock(org.flexlb.cache.match.CacheAwareService.class));

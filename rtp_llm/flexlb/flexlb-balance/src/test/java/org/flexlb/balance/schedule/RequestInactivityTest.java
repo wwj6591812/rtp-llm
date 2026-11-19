@@ -168,7 +168,8 @@ class RequestInactivityTest {
                             route,
                             SchedulerTestSupport.responseCandidate(
                                     context, RequestContext.ResponseKind.ACK),
-                            1000L));
+                            1000L,
+                            0L));
         }
         assertNull(context.currentSelectionAttempt());
         org.junit.jupiter.api.Assertions.assertNotNull(context.snapshot().responseForFuture());

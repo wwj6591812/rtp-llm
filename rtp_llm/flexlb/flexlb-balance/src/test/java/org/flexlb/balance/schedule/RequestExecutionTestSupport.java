@@ -49,7 +49,7 @@ public final class RequestExecutionTestSupport {
         var ledger = org.flexlb.worker.endpoint.EndpointTestSupport.resources(prefill);
         var registered =
                 ledger.tryRegisterSelection(
-                        context.getRequestId(), ledger.selectionSnapshot(), workMs);
+                        context.getRequestId(), ledger.selectionSnapshot(), workMs, -1L);
         org.junit.jupiter.api.Assertions.assertEquals(
                 WorkerEndpoint.RegistrationStatus.REGISTERED, registered.status());
         var roles = new java.util.ArrayList<RoleSelection>();

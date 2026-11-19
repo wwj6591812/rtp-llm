@@ -100,11 +100,6 @@ public class PrefillEndpoint extends WorkerEndpoint
     }
 
     public Registration<RequestRegistration> tryRegisterSelection(
-            String requestId, PrefillEndpoint.SelectionSnapshot expected, long computeTokens) {
-        return tryRegisterSelection(requestId, expected, computeTokens, -1L);
-    }
-
-    public Registration<RequestRegistration> tryRegisterSelection(
             String requestId,
             SelectionSnapshot expected,
             long computeTokens,
@@ -295,8 +290,7 @@ public class PrefillEndpoint extends WorkerEndpoint
     protected void closeEndpoint() {
         Throwable cleanupFailure = null;
         try {
-            RemovedRequests cleanup = removeRequestsOnClose();
-            for (var registration : cleanup.ownedItems()) {
+            for (var registration : removeRequestsOnClose()) {
                 try {
                     publishWorkerRequest(
                             registration,
@@ -320,7 +314,7 @@ public class PrefillEndpoint extends WorkerEndpoint
     /**
      * Captures cleanup notifications and clears all records in one Endpoint lock.
      */
-    RemovedRequests removeRequestsOnClose() {
+    private List<RequestRegistration> removeRequestsOnClose() {
         List<RequestRegistration> ownedItems = new ArrayList<>();
 
         stateLock().lock();
@@ -345,7 +339,7 @@ public class PrefillEndpoint extends WorkerEndpoint
                 Comparator.comparingLong((RequestRegistration entry) -> entry.sequence)
                         .thenComparing(RequestRegistration::requestId));
 
-        return new RemovedRequests(ownedItems);
+        return ownedItems;
     }
 
     /**
@@ -597,15 +591,6 @@ public class PrefillEndpoint extends WorkerEndpoint
             checkArgument(
                     eventType != RequestEventType.ACTIVE || errorCode == 0L,
                     "an active Prefill request status cannot carry an error code");
-        }
-    }
-
-    /**
-     * Captures an immutable list of registrations removed from a Prefill endpoint.
-     */
-    public record RemovedRequests(List<RequestRegistration> ownedItems) {
-        public RemovedRequests {
-            ownedItems = List.copyOf(ownedItems);
         }
     }
 

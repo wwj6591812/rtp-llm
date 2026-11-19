@@ -3,7 +3,9 @@ package org.flexlb.api;
 import org.flexlb.api.metrics.ApiMetricsReporter;
 import org.flexlb.api.server.FlexlbGrpcServer;
 import org.flexlb.balance.schedule.AbstractRequestScheduler;
+import org.flexlb.balance.schedule.RequestRepository;
 import org.flexlb.master.MasterStatusService;
+import org.flexlb.worker.endpoint.EndpointRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
@@ -15,12 +17,14 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Predicate;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -111,15 +115,25 @@ class ApplicationLifecycleTest {
     }
 
     @Test
-    void springCanWireProductionConstructor() {
+    void springWiresLifecycleAndOrphanSweepRespectsRequestRetention() {
+        var requests = mock(RequestRepository.class);
+        var endpoints = mock(EndpointRegistry.class);
+        when(requests.retainsIdentity("retained")).thenReturn(true);
+        doAnswer(
+                        invocation -> {
+                            Predicate<String> retain = invocation.getArgument(1);
+                            assertTrue(retain.test("retained"));
+                            assertFalse(retain.test("orphan"));
+                            return null;
+                        })
+                .when(endpoints)
+                .evictExpiredOrphans(eq(10_000L), any());
         try (var context = new AnnotationConfigApplicationContext()) {
             context.registerBean(MasterStatusService.class, () -> mock(MasterStatusService.class));
             context.registerBean(FlexlbGrpcServer.class, () -> mock(FlexlbGrpcServer.class));
             context.registerBean(ApiMetricsReporter.class, () -> mock(ApiMetricsReporter.class));
             context.registerBean(org.flexlb.util.ApplicationWarmupState.class);
-            context.registerBean(
-                    org.flexlb.balance.schedule.RequestRepository.class,
-                    () -> mock(org.flexlb.balance.schedule.RequestRepository.class));
+            context.registerBean(RequestRepository.class, () -> requests);
             context.registerBean(
                     "requestWorkExecutor",
                     java.util.concurrent.ExecutorService.class,
@@ -133,14 +147,16 @@ class ApplicationLifecycleTest {
             context.registerBean(
                     org.flexlb.balance.schedule.ResponseCompletionExecutor.class,
                     () -> mock(org.flexlb.balance.schedule.ResponseCompletionExecutor.class));
-            context.registerBean(
-                    org.flexlb.worker.endpoint.EndpointRegistry.class,
-                    () -> mock(org.flexlb.worker.endpoint.EndpointRegistry.class));
+            context.registerBean(EndpointRegistry.class, () -> endpoints);
             context.register(ApplicationLifecycle.class);
             context.getBeanFactory()
                     .registerSingleton("scheduler", mock(AbstractRequestScheduler.class));
             context.refresh();
-            assertNotNull(context.getBean(ApplicationLifecycle.class));
+            var lifecycle = context.getBean(ApplicationLifecycle.class);
+            lifecycle.evictExpiredEndpointOrphans();
+            when(requests.isClosed()).thenReturn(true);
+            lifecycle.evictExpiredEndpointOrphans();
+            verify(endpoints).evictExpiredOrphans(eq(10_000L), any());
         }
     }
 

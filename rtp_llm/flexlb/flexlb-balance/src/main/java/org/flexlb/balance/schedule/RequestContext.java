@@ -582,17 +582,6 @@ public final class RequestContext implements org.flexlb.worker.endpoint.WorkerRe
         decodeCleanupCompleted = acquired.decodeRegistration() == null;
     }
 
-    /**
-     * Commits the route and its reserved response together; expiration still wins before commit.
-     */
-    synchronized boolean tryCommitRoute(
-            SelectionAttempt exact,
-            RequestRoute acquired,
-            ResponseCompletionExecutor.Registration response,
-            long nowMs) {
-        return tryCommitRoute(exact, acquired, response, nowMs, 0L);
-    }
-
     synchronized boolean tryCommitRoute(
             SelectionAttempt exact,
             RequestRoute acquired,

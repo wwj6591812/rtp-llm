@@ -43,7 +43,8 @@ class PrefillComputeTokensTest {
     @Test
     void finalConfirmationAssociatesFeedbackOnlyOnce() {
         var registration =
-                endpoint.tryRegisterSelection("request", endpoint.selectionSnapshot(), 40L).value();
+                endpoint.tryRegisterSelection("request", endpoint.selectionSnapshot(), 40L, -1L)
+                        .value();
         WorkerEventSink events = event -> {};
         assertEquals(CommitStatus.COMMITTED, endpoint.confirmSelection(registration, events, 0L));
         assertEquals(
@@ -57,11 +58,13 @@ class PrefillComputeTokensTest {
     @Test
     void unpublishedRouteCanReleaseItsRegistration() {
         var registration =
-                endpoint.tryRegisterSelection("request", endpoint.selectionSnapshot(), 40L).value();
+                endpoint.tryRegisterSelection("request", endpoint.selectionSnapshot(), 40L, -1L)
+                        .value();
         assertTrue(endpoint.releaseRequest(registration));
         assertEquals(0L, endpoint.selectionSnapshot().computeTokens());
         var replacement =
-                endpoint.tryRegisterSelection("request", endpoint.selectionSnapshot(), 60L).value();
+                endpoint.tryRegisterSelection("request", endpoint.selectionSnapshot(), 60L, -1L)
+                        .value();
         assertFalse(endpoint.releaseRequest(registration));
         assertEquals(60L, endpoint.selectionSnapshot().computeTokens());
         assertTrue(endpoint.releaseRequest(replacement));
@@ -71,11 +74,11 @@ class PrefillComputeTokensTest {
     @Test
     void unchangedRankingAfterRollbackDoesNotRejectSelection() {
         var snapshot = endpoint.selectionSnapshot();
-        var other = endpoint.tryRegisterSelection("other", snapshot, 40L).value();
+        var other = endpoint.tryRegisterSelection("other", snapshot, 40L, -1L).value();
         endpoint.rollbackSelection(other);
         assertEquals(
                 WorkerEndpoint.RegistrationStatus.REGISTERED,
-                endpoint.tryRegisterSelection("request", snapshot, 40L).status());
+                endpoint.tryRegisterSelection("request", snapshot, 40L, -1L).status());
         assertEquals(40L, endpoint.selectionSnapshot().computeTokens());
     }
 
@@ -83,7 +86,7 @@ class PrefillComputeTokensTest {
     void unchangedCapacityReusesSnapshotAndChangesRemainVisible() {
         var empty = endpoint.selectionSnapshot();
         assertSame(empty, endpoint.selectionSnapshot());
-        var registration = endpoint.tryRegisterSelection("request", empty, 40L).value();
+        var registration = endpoint.tryRegisterSelection("request", empty, 40L, -1L).value();
         var reserved = endpoint.selectionSnapshot();
         assertEquals(0L, empty.computeTokens());
         assertEquals(40L, reserved.computeTokens());
@@ -107,39 +110,42 @@ class PrefillComputeTokensTest {
     @Test
     void outdatedSnapshotReportsFullOnlyWhenCurrentCapacityIsInsufficient() {
         var snapshot = endpoint.selectionSnapshot();
-        endpoint.tryRegisterSelection("existing", snapshot, 70L);
-        endpoint.tryRegisterSelection("occupant", endpoint.selectionSnapshot(), 0L);
+        endpoint.tryRegisterSelection("existing", snapshot, 70L, -1L);
+        endpoint.tryRegisterSelection("occupant", endpoint.selectionSnapshot(), 0L, -1L);
         assertEquals(
                 WorkerEndpoint.RegistrationStatus.CAPACITY_FULL,
-                endpoint.tryRegisterSelection("full", snapshot, 40L).status());
+                endpoint.tryRegisterSelection("full", snapshot, 40L, -1L).status());
         assertEquals(
                 WorkerEndpoint.RegistrationStatus.CAPACITY_FULL,
-                endpoint.tryRegisterSelection("fits", snapshot, 20L).status());
+                endpoint.tryRegisterSelection("fits", snapshot, 20L, -1L).status());
         assertEquals(70L, endpoint.selectionSnapshot().computeTokens());
     }
 
     @Test
     void chargesTokensUntilExactReservationIsReleased() {
-        var first = endpoint.tryRegisterSelection("first", endpoint.selectionSnapshot(), 70L);
+        var first = endpoint.tryRegisterSelection("first", endpoint.selectionSnapshot(), 70L, -1L);
         assertEquals(WorkerEndpoint.RegistrationStatus.REGISTERED, first.status());
-        var second = endpoint.tryRegisterSelection("second", endpoint.selectionSnapshot(), 30L);
+        var second =
+                endpoint.tryRegisterSelection("second", endpoint.selectionSnapshot(), 30L, -1L);
         assertEquals(WorkerEndpoint.RegistrationStatus.REGISTERED, second.status());
         assertEquals(100L, endpoint.selectionSnapshot().computeTokens());
         assertEquals(
                 WorkerEndpoint.RegistrationStatus.CAPACITY_FULL,
-                endpoint.tryRegisterSelection("third", endpoint.selectionSnapshot(), 1L).status());
+                endpoint.tryRegisterSelection("third", endpoint.selectionSnapshot(), 1L, -1L)
+                        .status());
         assertTrue(endpoint.rollbackSelection(first.value()));
         assertFalse(endpoint.rollbackSelection(first.value()));
         assertEquals(30L, endpoint.selectionSnapshot().computeTokens());
         assertEquals(
                 WorkerEndpoint.RegistrationStatus.REGISTERED,
-                endpoint.tryRegisterSelection("third", endpoint.selectionSnapshot(), 70L).status());
+                endpoint.tryRegisterSelection("third", endpoint.selectionSnapshot(), 70L, -1L)
+                        .status());
         assertEquals(100L, endpoint.selectionSnapshot().computeTokens());
     }
 
     @Test
     void concurrentSelectionsCannotExceedWorkerCapacity() throws Exception {
-        endpoint.tryRegisterSelection("occupant", endpoint.selectionSnapshot(), 0L);
+        endpoint.tryRegisterSelection("occupant", endpoint.selectionSnapshot(), 0L, -1L);
         var snapshot = endpoint.selectionSnapshot();
         var start = new CountDownLatch(1);
         try (var workers = Executors.newFixedThreadPool(2)) {
@@ -147,13 +153,13 @@ class PrefillComputeTokensTest {
                     workers.submit(
                             () -> {
                                 assertTrue(start.await(2, TimeUnit.SECONDS));
-                                return endpoint.tryRegisterSelection("first", snapshot, 60L);
+                                return endpoint.tryRegisterSelection("first", snapshot, 60L, -1L);
                             });
             var second =
                     workers.submit(
                             () -> {
                                 assertTrue(start.await(2, TimeUnit.SECONDS));
-                                return endpoint.tryRegisterSelection("second", snapshot, 60L);
+                                return endpoint.tryRegisterSelection("second", snapshot, 60L, -1L);
                             });
             start.countDown();
             var statuses =
@@ -173,7 +179,7 @@ class PrefillComputeTokensTest {
             assertEquals(60L, endpoint.selectionSnapshot().computeTokens());
             assertEquals(
                     WorkerEndpoint.RegistrationStatus.CAPACITY_FULL,
-                    endpoint.tryRegisterSelection("retry", endpoint.selectionSnapshot(), 60L)
+                    endpoint.tryRegisterSelection("retry", endpoint.selectionSnapshot(), 60L, -1L)
                             .status());
         }
     }
@@ -186,7 +192,7 @@ class PrefillComputeTokensTest {
                         actual.generationId() + 1, actual.resourceVersion(), 0L, 0L, 128, false);
         assertEquals(
                 WorkerEndpoint.RegistrationStatus.VERSION_CONFLICT,
-                endpoint.tryRegisterSelection("request", stale, 10L).status());
+                endpoint.tryRegisterSelection("request", stale, 10L, -1L).status());
         assertEquals(0L, endpoint.selectionSnapshot().computeTokens());
     }
 }

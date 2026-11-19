@@ -52,7 +52,8 @@ class EndpointRegistrationTest {
                 endpoint = prefill;
                 register =
                         id ->
-                                prefill.tryRegisterSelection(id, prefill.selectionSnapshot(), 10)
+                                prefill.tryRegisterSelection(
+                                                id, prefill.selectionSnapshot(), 10, -1L)
                                         .value();
             }
             case DECODE -> {

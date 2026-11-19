@@ -1,7 +1,6 @@
 package org.flexlb.worker.endpoint;
 
 import org.flexlb.balance.metrics.DeliveryMetricsReporter;
-import org.flexlb.balance.schedule.RequestRepository;
 import org.flexlb.balance.schedule.SchedulingTestConfig;
 import org.flexlb.cache.match.CacheAwareService;
 import org.flexlb.config.ConfigService;
@@ -161,7 +160,6 @@ class ReviewLifecycleRegressionTest {
         when(config.loadBalanceConfig()).thenReturn(SchedulingTestConfig.newConfig());
         return new EndpointRegistry(
                 config,
-                new RequestRepository(),
                 mock(DeliveryMetricsReporter.class),
                 new CapacityNotifier(),
                 org.mockito.Mockito.mock(org.flexlb.cache.match.CacheAwareService.class));

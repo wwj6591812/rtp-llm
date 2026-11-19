@@ -26,10 +26,6 @@ public final class DecodeResources {
         public boolean registered() {
             return this != NOT_REGISTERED;
         }
-
-        public boolean confirmed() {
-            return this == CONFIRMED;
-        }
     }
 
     /**

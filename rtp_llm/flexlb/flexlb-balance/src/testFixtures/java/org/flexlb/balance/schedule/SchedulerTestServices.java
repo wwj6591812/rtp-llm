@@ -134,7 +134,7 @@ public final class SchedulerTestServices {
                             endpoint.tryRegisterSelection(
                                     data.getRequestId(),
                                     endpoint.selectionSnapshot(),
-                                    role.computeTokens());
+                                    role.computeTokens(), -1L);
                     if (registration.status() == WorkerEndpoint.RegistrationStatus.VERSION_CONFLICT
                             || registration.status()
                                     == WorkerEndpoint.RegistrationStatus.UNAVAILABLE)

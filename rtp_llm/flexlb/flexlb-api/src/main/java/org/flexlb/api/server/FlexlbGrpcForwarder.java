@@ -251,12 +251,6 @@ public class FlexlbGrpcForwarder {
     }
 
     CompletionStage<CancelForwardResult> forwardCompensatingCancelToMaster(
-            FlexlbScheduleProtocol.FlexlbCancelRequestPB request, String originalMasterHostIpPort) {
-        return forwardCompensatingCancelToMaster(
-                request, originalMasterHostIpPort, entryTraceContext());
-    }
-
-    CompletionStage<CancelForwardResult> forwardCompensatingCancelToMaster(
             FlexlbScheduleProtocol.FlexlbCancelRequestPB request,
             String originalMasterHostIpPort,
             Context traceContext) {
@@ -267,14 +261,6 @@ public class FlexlbGrpcForwarder {
                         .getMasterForwardRpcTimeoutMs();
         return forwardCompensatingCancelToMaster(
                 request, originalMasterHostIpPort, timeoutMs, traceContext);
-    }
-
-    CompletionStage<CancelForwardResult> forwardCompensatingCancelToMaster(
-            FlexlbScheduleProtocol.FlexlbCancelRequestPB request,
-            String originalMasterHostIpPort,
-            long timeoutMs) {
-        return forwardCompensatingCancelToMaster(
-                request, originalMasterHostIpPort, timeoutMs, entryTraceContext());
     }
 
     CompletionStage<FlexlbScheduleProtocol.GetRequestStateResponsePB>

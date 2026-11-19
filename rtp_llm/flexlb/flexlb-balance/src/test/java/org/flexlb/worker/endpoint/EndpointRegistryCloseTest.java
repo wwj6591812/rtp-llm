@@ -1,7 +1,6 @@
 package org.flexlb.worker.endpoint;
 
 import org.flexlb.balance.metrics.DeliveryMetricsReporter;
-import org.flexlb.balance.schedule.AbstractRequestScheduler;
 import org.flexlb.cache.match.CacheAwareService;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.service.RoleType;
@@ -517,10 +516,6 @@ class EndpointRegistryCloseTest {
     @Test
     void closeWaitsForAlreadyAdmittedGenerationTransactionBeforeDraining() throws Exception {
         EndpointRegistry registry = registry();
-        var requests =
-                (org.flexlb.balance.schedule.RequestRepository)
-                        ReflectionTestUtils.getField(registry, "requests");
-        when(requests.findActive("123")).thenReturn(null);
         var status = EndpointTestSupport.workerStatus(RoleType.DECODE, "127.0.0.1", 8700, 8701);
         registry.currentOrDiscover(RoleType.DECODE, status.getLogicalIpPort(), () -> status);
         DecodeEndpoint endpoint =
@@ -810,8 +805,6 @@ class EndpointRegistryCloseTest {
                 .thenReturn(org.flexlb.balance.schedule.SchedulingTestConfig.newConfig());
         return new EndpointRegistry(
                 config,
-                org.flexlb.balance.schedule.SchedulerTestSupport.repository(
-                        mock(AbstractRequestScheduler.class)),
                 mock(DeliveryMetricsReporter.class),
                 availability,
                 org.mockito.Mockito.mock(org.flexlb.cache.match.CacheAwareService.class));

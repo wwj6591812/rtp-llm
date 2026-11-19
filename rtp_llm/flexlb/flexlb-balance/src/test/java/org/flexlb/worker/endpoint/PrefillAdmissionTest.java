@@ -32,7 +32,8 @@ class PrefillAdmissionTest {
             report(endpoint, 0, 0);
             assertEquals(128L, endpoint.requestCapacity().availableRequests());
             var registration =
-                    endpoint.tryRegisterSelection("first", endpoint.selectionSnapshot(), 0).value();
+                    endpoint.tryRegisterSelection("first", endpoint.selectionSnapshot(), 0, -1L)
+                            .value();
             assertEquals(127L, endpoint.requestCapacity().availableRequests());
             endpoint.rollbackSelection(registration);
             assertEquals(128L, endpoint.requestCapacity().availableRequests());
@@ -49,7 +50,8 @@ class PrefillAdmissionTest {
             var available = endpoint.requestCapacity();
             assertEquals(1L, available.availableRequests());
             var registration =
-                    endpoint.tryRegisterSelection("last-headroom", endpoint.selectionSnapshot(), 0)
+                    endpoint.tryRegisterSelection(
+                                    "last-headroom", endpoint.selectionSnapshot(), 0, -1L)
                             .value();
             assertEquals(0L, endpoint.requestCapacity().availableRequests());
             assertTrue(endpoint.requestCapacity().revision() > available.revision());
@@ -74,13 +76,13 @@ class PrefillAdmissionTest {
                     workers.submit(
                             () -> {
                                 assertTrue(start.await(2, TimeUnit.SECONDS));
-                                return endpoint.tryRegisterSelection("first", snapshot, 0);
+                                return endpoint.tryRegisterSelection("first", snapshot, 0, -1L);
                             });
             var second =
                     workers.submit(
                             () -> {
                                 assertTrue(start.await(2, TimeUnit.SECONDS));
-                                return endpoint.tryRegisterSelection("second", snapshot, 0);
+                                return endpoint.tryRegisterSelection("second", snapshot, 0, -1L);
                             });
             start.countDown();
             var a = first.get(2, TimeUnit.SECONDS);
@@ -104,11 +106,12 @@ class PrefillAdmissionTest {
         var endpoint = endpoint(128, true);
         try {
             report(endpoint, 10, 0);
-            var first = endpoint.tryRegisterSelection("first", endpoint.selectionSnapshot(), 0);
+            var first =
+                    endpoint.tryRegisterSelection("first", endpoint.selectionSnapshot(), 0, -1L);
             assertEquals(WorkerEndpoint.RegistrationStatus.REGISTERED, first.status());
             assertEquals(
                     WorkerEndpoint.RegistrationStatus.CAPACITY_FULL,
-                    endpoint.tryRegisterSelection("second", endpoint.selectionSnapshot(), 0)
+                    endpoint.tryRegisterSelection("second", endpoint.selectionSnapshot(), 0, -1L)
                             .status());
             endpoint.rollbackSelection(first.value());
             assertFalse(endpoint.selectionSnapshot().admissionBlocked());
@@ -117,7 +120,7 @@ class PrefillAdmissionTest {
                 assertEquals(
                         WorkerEndpoint.RegistrationStatus.REGISTERED,
                         endpoint.tryRegisterSelection(
-                                        "unknown-" + i, endpoint.selectionSnapshot(), 0)
+                                        "unknown-" + i, endpoint.selectionSnapshot(), 0, -1L)
                                 .status());
             }
         } finally {
@@ -259,7 +262,7 @@ class PrefillAdmissionTest {
         var endpoint = endpoint(128, false);
         try {
             var registration =
-                    endpoint.tryRegisterSelection("known", endpoint.selectionSnapshot(), 20)
+                    endpoint.tryRegisterSelection("known", endpoint.selectionSnapshot(), 20, -1L)
                             .value();
             endpoint.confirmSelection(registration, ignored -> {}, 1);
             var task = new org.flexlb.worker.status.TaskInfo();

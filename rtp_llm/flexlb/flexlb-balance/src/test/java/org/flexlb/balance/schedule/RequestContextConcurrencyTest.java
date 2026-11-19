@@ -225,7 +225,8 @@ class RequestContextConcurrencyTest {
                         route,
                         SchedulerTestSupport.responseCandidate(
                                 context, RequestContext.ResponseKind.ACK),
-                        1200L));
+                        1200L,
+                        0L));
         assertNull(context.snapshot().responseForFuture());
         assertSame(route, context.snapshot().route());
         context.recordCleanupProgress(route, true, true, false, 1201L);
@@ -253,7 +254,7 @@ class RequestContextConcurrencyTest {
                     new ResponseCompletionExecutor.Registration(
                             executor, context, future, RequestContext.ResponseKind.ACK);
             synchronized (context) {
-                assertTrue(context.tryCommitRoute(attempt, route, completion, 1100L));
+                assertTrue(context.tryCommitRoute(attempt, route, completion, 1100L, 0L));
                 completion.prepare(
                         ResponseCompletionExecutor.RequestFuture.Completion.RESPONSE,
                         new org.flexlb.balance.request.Response(),
@@ -329,7 +330,8 @@ class RequestContextConcurrencyTest {
                         route,
                         SchedulerTestSupport.responseCandidate(
                                 context, RequestContext.ResponseKind.ACK),
-                        61000L));
+                        61000L,
+                        0L));
         assertNull(context.snapshot().responseForFuture());
         assertEquals(CancelReason.DEADLINE_EXCEEDED, context.snapshot().cancellationReason());
     }
@@ -434,7 +436,8 @@ class RequestContextConcurrencyTest {
                         route,
                         SchedulerTestSupport.responseCandidate(
                                 context, RequestContext.ResponseKind.ACK),
-                        1000L));
+                        1000L,
+                        0L));
         var before = context.snapshot();
         var activePrefill =
                 new WorkerEventTestSupport.RequestEvent(
@@ -526,7 +529,8 @@ class RequestContextConcurrencyTest {
                         route,
                         SchedulerTestSupport.responseCandidate(
                                 context, RequestContext.ResponseKind.ACK),
-                        1000L));
+                        1000L,
+                        0L));
         var before = context.snapshot();
         assertFalse(
                 WorkerEventTestSupport.record(
@@ -566,7 +570,7 @@ class RequestContextConcurrencyTest {
         var route = acquiredRoute(context, attempt);
         var response =
                 SchedulerTestSupport.responseCandidate(context, RequestContext.ResponseKind.ACK);
-        assertTrue(context.tryCommitRoute(attempt, route, response, 1000L));
+        assertTrue(context.tryCommitRoute(attempt, route, response, 1000L, 0L));
         assertTrue(
                 context.requestCancel(
                         CancelReason.CLIENT_CANCELLED,
@@ -649,7 +653,8 @@ class RequestContextConcurrencyTest {
                         route,
                         SchedulerTestSupport.responseCandidate(
                                 context, RequestContext.ResponseKind.ACK),
-                        1000L));
+                        1000L,
+                        0L));
         assertTrue(
                 context.requestCancel(
                         CancelReason.CLIENT_CANCELLED,
@@ -691,7 +696,7 @@ class RequestContextConcurrencyTest {
         var route = acquiredRoute(context, attempt);
         var response =
                 SchedulerTestSupport.responseCandidate(context, RequestContext.ResponseKind.ACK);
-        assertTrue(context.tryCommitRoute(attempt, route, response, 1000L));
+        assertTrue(context.tryCommitRoute(attempt, route, response, 1000L, 0L));
         var before = context.snapshot();
         var cleanup =
                 new WorkerEventTestSupport.RequestEvent(
@@ -731,7 +736,8 @@ class RequestContextConcurrencyTest {
                             route,
                             SchedulerTestSupport.responseCandidate(
                                     context, RequestContext.ResponseKind.ACK),
-                            1000L));
+                            1000L,
+                            0L));
         }
         var before = context.snapshot();
         assertFalse(
@@ -930,7 +936,7 @@ class RequestContextConcurrencyTest {
         var route = acquiredRouteForEvent(context, attempt, role);
         var response =
                 SchedulerTestSupport.responseCandidate(context, RequestContext.ResponseKind.ACK);
-        assertTrue(context.tryCommitRoute(attempt, route, response, 1000L));
+        assertTrue(context.tryCommitRoute(attempt, route, response, 1000L, 0L));
         var endpoint = role == RoleType.ENCODER ? route.encoderEndpoint() : route.prefillEndpoint();
 
         WorkerEventTestSupport.record(
@@ -965,7 +971,8 @@ class RequestContextConcurrencyTest {
                         route,
                         SchedulerTestSupport.responseCandidate(
                                 context, RequestContext.ResponseKind.ACK),
-                        1000L));
+                        1000L,
+                        0L));
 
         WorkerEventTestSupport.record(
                 context,

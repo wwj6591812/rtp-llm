@@ -188,7 +188,8 @@ final class RequestProtocolTestSupport {
                     publication,
                     SchedulerTestSupport.responseCandidate(
                             context, RequestContext.ResponseKind.ACK),
-                    now);
+                    now,
+                    0L);
         }
         return SelectionResult.success(publication);
     }
@@ -215,7 +216,10 @@ final class RequestProtocolTestSupport {
                 .thenReturn(true);
         org.mockito.Mockito.lenient()
                 .when(endpoint.releaseUnconfirmedRequest(org.mockito.ArgumentMatchers.any()))
-                .thenAnswer(call -> !endpoint.registrationState(call.getArgument(0)).confirmed());
+                .thenAnswer(
+                        call ->
+                                endpoint.registrationState(call.getArgument(0))
+                                        != DecodeResources.RegistrationState.CONFIRMED);
         org.mockito.Mockito.lenient()
                 .when(
                         endpoint.tryRegisterSelection(
@@ -594,7 +598,8 @@ final class RequestProtocolTestSupport {
                     admission,
                     route,
                     SchedulerTestSupport.responseCandidate(ctx, RequestContext.ResponseKind.ACK),
-                    now);
+                    now,
+                    0L);
         }
         ctx.finishSelectionWithoutCommit(admission, null, now);
         ctx.endRequest(
@@ -657,7 +662,7 @@ final class RequestProtocolTestSupport {
                             RequestContext.ResponseKind.ACK)) {
                 synchronized (context) {
                     context.registerSelectedRoute(admission, route);
-                    recorded = context.tryCommitRoute(admission, route, completion, nowMs);
+                    recorded = context.tryCommitRoute(admission, route, completion, nowMs, 0L);
                     if (recorded)
                         completion.prepare(
                                 ResponseCompletionExecutor.RequestFuture.Completion.RESPONSE,
@@ -795,7 +800,8 @@ final class RequestProtocolTestSupport {
                     route,
                     SchedulerTestSupport.responseCandidate(
                             context, RequestContext.ResponseKind.ACK),
-                    nowMs);
+                    nowMs,
+                    0L);
         }
     }
 

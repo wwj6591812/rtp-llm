@@ -393,7 +393,8 @@ class RequestSchedulerContractTest {
                 var repository = f.requests.repository;
                 assertTrue(
                         repository.removeExactTerminal(
-                                repository.findTerminal("944"), Long.MAX_VALUE));
+                                repository.findTerminal("944", RequestPhase.GENERATION),
+                                Long.MAX_VALUE));
 
                 var replacement = f.context(944L);
                 var future = f.requests.submit(replacement, () -> {});
@@ -734,8 +735,12 @@ class RequestSchedulerContractTest {
                 nextFuture.get(3, TimeUnit.SECONDS);
                 RequestProtocolTestSupport.awaitCondition(
                         () ->
-                                runtime.requests().findTerminal("100") != null
-                                        && runtime.requests().findTerminal("101") != null);
+                                runtime.requests().findTerminal("100", RequestPhase.GENERATION)
+                                                != null
+                                        && runtime.requests()
+                                                        .findTerminal(
+                                                                "101", RequestPhase.GENERATION)
+                                                != null);
                 org.junit.jupiter.api.Assertions.assertNotNull(
                         runtime.requests().findTerminal("100", RequestPhase.GENERATION, owner));
                 org.junit.jupiter.api.Assertions.assertNotNull(

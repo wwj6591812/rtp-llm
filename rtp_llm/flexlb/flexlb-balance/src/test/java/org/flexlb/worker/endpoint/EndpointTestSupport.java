@@ -65,19 +65,7 @@ public final class EndpointTestSupport {
         var names =
                 java.util.Set.of(
                         "tryRegisterSelection",
-                        "captureRouteProjectionInputs",
                         "rollbackSelection",
-                        "queueDepth",
-                        "releaseQueuedRequest",
-                        "queueCounters",
-                        "captureQueue",
-                        "closeQueue",
-                        "queueStopped",
-                        "selectionCurrentLocked",
-                        "explainAdmissionRejection",
-                        "requestCapacityAvailable",
-                        "batchCapacityAvailable",
-                        "removeRequestsOnClose",
                         "evictExpiredRequests",
                         "stats");
         for (var method : PrefillEndpoint.class.getDeclaredMethods()) {
@@ -150,10 +138,6 @@ public final class EndpointTestSupport {
             useStateLock(endpoint, lock);
         }
         return lock;
-    }
-
-    public static PrefillEndpoint.RemovedRequests removeRequestsOnClose(PrefillEndpoint endpoint) {
-        return resources(endpoint).removeRequestsOnClose();
     }
 
     public static void awaitWorkerCleanup(java.util.concurrent.CompletionStage<Void> cleanup) {

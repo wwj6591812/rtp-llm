@@ -16,7 +16,7 @@ import java.util.function.Predicate;
  * Shared identity directory; request decisions remain with the exact context and its owner.
  */
 @Component
-public final class RequestRepository implements org.flexlb.worker.endpoint.WorkerRequests {
+public final class RequestRepository {
     private final Object registrationLock = new Object();
     private final EnumMap<RequestPhase, ConcurrentMap<String, RequestContext>> activeByPhase =
             new EnumMap<>(RequestPhase.class);
@@ -146,10 +146,6 @@ public final class RequestRepository implements org.flexlb.worker.endpoint.Worke
             }
         }
         return true;
-    }
-
-    RequestState findTerminal(String requestId) {
-        return findTerminal(requestId, RequestPhase.GENERATION);
     }
 
     RequestState findTerminal(String requestId, RequestPhase phase) {

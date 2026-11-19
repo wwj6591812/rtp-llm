@@ -46,7 +46,6 @@ public class EndpointRegistry
     private final ConcurrentHashMap<WorkerStatus, WorkerCleanup> workerCleanups =
             new ConcurrentHashMap<>();
     private final ConfigService configService;
-    private final WorkerRequests requests;
     private final EndpointMetrics reporter;
     private final CapacityNotifier capacityNotifier;
     private final WorkerCaches cacheAwareService;
@@ -64,21 +63,14 @@ public class EndpointRegistry
     @Autowired
     public EndpointRegistry(
             ConfigService configService,
-            WorkerRequests requests,
             EndpointMetrics reporter,
             CapacityNotifier capacityNotifier,
             @org.springframework.context.annotation.Lazy WorkerCaches cacheAwareService) {
         this.configService = Objects.requireNonNull(configService);
-        this.requests = Objects.requireNonNull(requests);
         this.reporter = Objects.requireNonNull(reporter);
         this.capacityNotifier = Objects.requireNonNull(capacityNotifier);
         this.cacheAwareService = Objects.requireNonNull(cacheAwareService);
         checkArgument(closeTimeoutMs > 0, "endpoint retirement timeout must be positive");
-    }
-
-    @org.springframework.scheduling.annotation.Scheduled(fixedRate = 60_000L)
-    public void maintainExpiration() {
-        if (!requests.isClosed()) evictExpiredOrphans(10_000L, requests::retainsIdentity);
     }
 
     public void evictExpiredOrphans(long ttlMs, Predicate<String> retainForSchedulerCleanup) {
@@ -354,8 +346,10 @@ public class EndpointRegistry
      * The requested type must match the role's endpoint implementation.
      */
     @SuppressWarnings("unchecked")
-    public <T extends WorkerEndpoint> List<T> endpoints(RoleType role, String group) {
-        List<T> directory = (List<T>) (List<?>) routingDirectories.getOrDefault(role, List.of());
+    public <EndpointT extends WorkerEndpoint> List<EndpointT> endpoints(
+            RoleType role, String group) {
+        List<EndpointT> directory =
+                (List<EndpointT>) (List<?>) routingDirectories.getOrDefault(role, List.of());
         return group == null
                 ? directory
                 : directory.stream()

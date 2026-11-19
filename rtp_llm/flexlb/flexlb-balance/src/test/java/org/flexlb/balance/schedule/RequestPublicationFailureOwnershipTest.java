@@ -91,7 +91,9 @@ class RequestPublicationFailureOwnershipTest {
                                 "prefill finished",
                                 System.currentTimeMillis()));
                 RequestProtocolTestSupport.awaitCondition(
-                        () -> f.owner.repository.findTerminal("9398") != null);
+                        () ->
+                                f.owner.repository.findTerminal("9398", RequestPhase.GENERATION)
+                                        != null);
                 assertEquals(Phase.CLOSED, context.snapshot().phase());
                 verify(cancellations).forget(route);
             } finally {

@@ -1,10 +1,8 @@
 package org.flexlb.worker.endpoint;
 
 /**
- * Exposes the request identity and queue order used by preemption.
+ * Identifies the request that owns a Decode resource wait.
  */
 public interface WorkerRequest {
     String getRequestId();
-
-    long getPlacementSequence();
 }

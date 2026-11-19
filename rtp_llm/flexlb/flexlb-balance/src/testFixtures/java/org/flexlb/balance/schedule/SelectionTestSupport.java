@@ -1,5 +1,7 @@
 package org.flexlb.balance.schedule;
 
+import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
+
 import org.flexlb.balance.strategy.CostBasedPrefillStrategy;
 import org.flexlb.balance.strategy.RoleSelection;
 import org.flexlb.balance.strategy.SelectionResult;
@@ -10,8 +12,6 @@ import org.flexlb.worker.endpoint.EncoderEndpoint;
 import org.flexlb.worker.endpoint.PrefillEndpoint;
 import org.flexlb.worker.endpoint.WorkerEndpoint;
 import org.flexlb.worker.status.ServerStatus;
-
-import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
 
 /**
  * Provides deterministic choices while the production selector performs registration.
@@ -132,7 +132,7 @@ public final class SelectionTestSupport {
             PrefillEndpoint endpoint, RequestRoute route, long computeTokens) {
         var registered =
                 endpoint.tryRegisterSelection(
-                        route.requestId(), endpoint.selectionSnapshot(), computeTokens);
+                        route.requestId(), endpoint.selectionSnapshot(), computeTokens, -1L);
         if (registered.status() == WorkerEndpoint.RegistrationStatus.REGISTERED) {
             org.mockito.Mockito.doReturn(registered.value()).when(route).prefillRegistration();
         }

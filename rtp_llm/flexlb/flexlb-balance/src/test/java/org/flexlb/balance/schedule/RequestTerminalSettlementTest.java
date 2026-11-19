@@ -270,7 +270,10 @@ class RequestTerminalSettlementTest {
                     context.snapshot().deadlines().inactivity(),
                     "real pending notification keeps its existing watch");
             assertSame(context, f.scheduler().repository.findActive(RESERVATION.requestId()));
-            assertNull(f.scheduler().repository.findTerminal(RESERVATION.requestId()));
+            assertNull(
+                    f.scheduler()
+                            .repository
+                            .findTerminal(RESERVATION.requestId(), RequestPhase.GENERATION));
             verify(f.item().prefillEndpoint(), times(1)).releaseRequest(prefillRegistration);
             verify(f.item().decodeEndpoint(), times(1)).releaseRequest(RESERVATION);
             if (failures > 3) {

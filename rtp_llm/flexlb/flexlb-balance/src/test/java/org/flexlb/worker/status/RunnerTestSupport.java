@@ -2,7 +2,6 @@ package org.flexlb.worker.status;
 
 import org.flexlb.balance.metrics.DeliveryMetricsReporter;
 import org.flexlb.balance.schedule.EngineCancellation;
-import org.flexlb.balance.schedule.RequestRepository;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.service.RoleType;
 import org.flexlb.worker.endpoint.CapacityNotifier;
@@ -37,7 +36,6 @@ public final class RunnerTestSupport {
         var config = configService.loadBalanceConfig();
         return new EndpointRegistry(
                 configService,
-                new RequestRepository(),
                 Mockito.mock(DeliveryMetricsReporter.class),
                 new CapacityNotifier(),
                 org.mockito.Mockito.mock(org.flexlb.cache.match.CacheAwareService.class));

@@ -1101,7 +1101,6 @@ class DirectAdmissionContractTest {
                     spy(
                             new EndpointRegistry(
                                     service,
-                                    repository,
                                     reporter,
                                     placement,
                                     org.mockito.Mockito.mock(

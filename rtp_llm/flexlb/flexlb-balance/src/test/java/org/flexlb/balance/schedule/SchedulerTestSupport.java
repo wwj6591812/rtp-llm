@@ -106,7 +106,8 @@ public final class SchedulerTestSupport {
                             route,
                             SchedulerTestSupport.responseCandidate(
                                     context, RequestContext.ResponseKind.ACK),
-                            now);
+                            now,
+                            0L);
                 }
                 org.flexlb.balance.schedule.RequestChangeAssertions.record(
                         context,
@@ -370,7 +371,7 @@ public final class SchedulerTestSupport {
 
     static RequestState requestRecordForArchive(
             AbstractRequestScheduler owner, RequestState state) {
-        var archived = repository(owner).findTerminal(state.requestId());
+        var archived = repository(owner).findTerminal(state.requestId(), RequestPhase.GENERATION);
         return archived == null ? state : archived;
     }
 

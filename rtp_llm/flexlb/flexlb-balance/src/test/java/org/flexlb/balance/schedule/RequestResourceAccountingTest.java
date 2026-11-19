@@ -455,11 +455,9 @@ class RequestResourceAccountingTest {
                     org.flexlb.balance.schedule.SchedulerTestSupport.runtime(requests).dispatcher,
                     "grpcClient",
                     channel);
-            var projector = requests;
             var endpoints =
                     new EndpointRegistry(
                             service,
-                            SchedulerTestSupport.repository(projector),
                             reporter,
                             new CapacityNotifier(),
                             org.mockito.Mockito.mock(

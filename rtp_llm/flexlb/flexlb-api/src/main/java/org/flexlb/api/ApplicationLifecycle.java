@@ -22,6 +22,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.core.env.Environment;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.util.Arrays;
@@ -29,7 +30,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Owns the fixed application online, health and graceful-shutdown workflow.
+ * Coordinates application startup, health, request maintenance and graceful shutdown.
  */
 @Slf4j
 @Component
@@ -43,7 +44,6 @@ public class ApplicationLifecycle implements ApplicationContextAware {
     private final EngineCancellation engineCancellation;
     private final ResponseCompletionExecutor responses;
     private final EndpointRegistry endpoints;
-
     private final MasterStatusService consistency;
     private final FlexlbGrpcServer grpcServer;
     private final ApiMetricsReporter reporter;
@@ -173,6 +173,14 @@ public class ApplicationLifecycle implements ApplicationContextAware {
 
     public boolean isHealthy() {
         return warmupState.isWarmupFinished() && !shutdownReceived;
+    }
+
+    /**
+     * Sweeps expired endpoint records once the request repository no longer retains their identity.
+     */
+    @Scheduled(fixedRate = 60_000L)
+    void evictExpiredEndpointOrphans() {
+        if (!requests.isClosed()) endpoints.evictExpiredOrphans(10_000L, requests::retainsIdentity);
     }
 
     private synchronized boolean closeApplication() {
