@@ -249,7 +249,7 @@ public final class CapacityWaitQueue {
      */
     private static final class RetryBudget {
         // Set only for worker budgets. Domain probes cannot participate in worker matching.
-        private CapacityKey workerRoleAndGroup;
+        private CapacityKey workerKey;
         private long workerCapacityRevision = -1L;
         private long retryLimit;
         private long chargedRetries;
@@ -257,12 +257,7 @@ public final class CapacityWaitQueue {
         private int unfinishedRetries;
 
         private void refreshWorker(WorkerAdmissionCapacity observation) {
-            var key = observation.key();
-            if (workerRoleAndGroup == null
-                    || workerRoleAndGroup.role() != key.role()
-                    || !java.util.Objects.equals(workerRoleAndGroup.group(), key.group())) {
-                workerRoleAndGroup = key.waitingDomain();
-            }
+            workerKey = observation.key();
             workerCapacityRevision = observation.revision();
             refresh(observation.availableRequests());
         }
@@ -278,9 +273,8 @@ public final class CapacityWaitQueue {
         }
 
         private boolean matches(CapacityKey waiter) {
-            return workerRoleAndGroup.role() == waiter.role()
-                    && (waiter.group() == null
-                            || waiter.group().equals(workerRoleAndGroup.group()));
+            return workerKey.role() == waiter.role()
+                    && (waiter.group() == null || waiter.group().equals(workerKey.group()));
         }
     }
 }
