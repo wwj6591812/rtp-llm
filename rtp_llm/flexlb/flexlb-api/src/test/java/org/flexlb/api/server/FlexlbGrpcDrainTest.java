@@ -15,7 +15,6 @@ import org.flexlb.api.metrics.ApiMetricsReporter;
 import org.flexlb.api.protocol.FlexlbScheduleProtocol.FlexlbScheduleRequestPB;
 import org.flexlb.api.protocol.FlexlbScheduleProtocol.FlexlbScheduleResponsePB;
 import org.flexlb.api.protocol.FlexlbServiceGrpc;
-import org.flexlb.balance.metrics.DeliveryMetricsReporter;
 import org.flexlb.balance.metrics.RequestSchedulerReporter;
 import org.flexlb.balance.request.Response;
 import org.flexlb.balance.schedule.AbstractRequestScheduler;
@@ -71,7 +70,6 @@ class FlexlbGrpcDrainTest {
                         mock(ApiMetricsReporter.class),
                         mock(FlexlbGrpcForwarder.class),
                         config,
-                        mock(DeliveryMetricsReporter.class),
                         mock(ServerScheduleLatencyRecorder.class),
                         mock(RequestSchedulerReporter.class));
         ServerInterceptor pauseBeforeSchedule =

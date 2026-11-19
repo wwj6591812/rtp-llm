@@ -130,7 +130,6 @@ class FollowerLocalRetryMockEngineTest extends FlexLBMockTestBase {
                             health,
                             forwarder,
                             configService,
-                            reporter,
                             mock(ServerScheduleLatencyRecorder.class),
                             mock(RequestSchedulerReporter.class));
             server =

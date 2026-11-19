@@ -93,6 +93,7 @@ public final class Request {
     @Builder.Default
     private final int rawPriority = 0;
 
+    /** Called by the Lombok-generated builder to normalize and copy request data. */
     private Request(
             List<Long> blockCacheKeys,
             List<String> cacheAffinityKeys,

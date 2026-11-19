@@ -14,7 +14,6 @@ import org.flexlb.api.ServerScheduleLatencyRecorder;
 import org.flexlb.api.metrics.ApiMetricsReporter;
 import org.flexlb.api.protocol.FlexlbScheduleProtocol;
 import org.flexlb.api.protocol.FlexlbServiceGrpc;
-import org.flexlb.balance.metrics.DeliveryMetricsReporter;
 import org.flexlb.balance.metrics.RequestSchedulerReporter;
 import org.flexlb.balance.request.Response;
 import org.flexlb.balance.schedule.AbstractRequestScheduler;
@@ -463,7 +462,6 @@ class FlexlbForwardHopGuardNettyTest {
                             healthReporter,
                             forwarder,
                             configService,
-                            mock(DeliveryMetricsReporter.class),
                             mock(ServerScheduleLatencyRecorder.class),
                             mock(RequestSchedulerReporter.class));
 

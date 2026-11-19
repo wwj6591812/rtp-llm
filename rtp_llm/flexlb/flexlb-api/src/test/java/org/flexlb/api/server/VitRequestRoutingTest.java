@@ -62,7 +62,6 @@ class VitRequestRoutingTest {
                             mock(ApiMetricsReporter.class),
                             mock(FlexlbGrpcForwarder.class),
                             service,
-                            batches,
                             mock(ServerScheduleLatencyRecorder.class),
                             reports);
             FlexlbServiceTestSupport.configureRouting(api, selector);

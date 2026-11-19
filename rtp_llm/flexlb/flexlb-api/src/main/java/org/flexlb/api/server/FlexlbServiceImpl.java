@@ -9,7 +9,6 @@ import org.flexlb.api.ServerScheduleLatencyRecorder;
 import org.flexlb.api.metrics.ApiMetricsReporter;
 import org.flexlb.api.protocol.FlexlbScheduleProtocol;
 import org.flexlb.api.protocol.FlexlbServiceGrpc;
-import org.flexlb.balance.metrics.DeliveryMetricsReporter;
 import org.flexlb.balance.metrics.RequestSchedulerReporter;
 import org.flexlb.balance.request.Request;
 import org.flexlb.balance.request.RequestRoutingService;
@@ -63,7 +62,6 @@ public class FlexlbServiceImpl extends FlexlbServiceGrpc.FlexlbServiceImplBase {
     private final MasterStatusView masterStatusView;
     private final ApiMetricsReporter serviceMetricsReporter;
     private final FlexlbGrpcForwarder grpcForwarder;
-    private final DeliveryMetricsReporter deliveryMetricsReporter;
     private final ServerScheduleLatencyRecorder serverLatencyRecorder;
     private final RequestSchedulerReporter requestSchedulerReporter;
 
@@ -77,7 +75,6 @@ public class FlexlbServiceImpl extends FlexlbServiceGrpc.FlexlbServiceImplBase {
             MasterStatusService masterStatusService,
             ApiMetricsReporter serviceMetricsReporter,
             FlexlbGrpcForwarder grpcForwarder,
-            DeliveryMetricsReporter deliveryMetricsReporter,
             ServerScheduleLatencyRecorder serverLatencyRecorder,
             RequestSchedulerReporter requestSchedulerReporter) {
         this(
@@ -87,7 +84,6 @@ public class FlexlbServiceImpl extends FlexlbServiceGrpc.FlexlbServiceImplBase {
                 (MasterStatusView) masterStatusService,
                 serviceMetricsReporter,
                 grpcForwarder,
-                deliveryMetricsReporter,
                 serverLatencyRecorder,
                 requestSchedulerReporter);
     }
@@ -99,7 +95,6 @@ public class FlexlbServiceImpl extends FlexlbServiceGrpc.FlexlbServiceImplBase {
             MasterStatusView masterStatusView,
             ApiMetricsReporter serviceMetricsReporter,
             FlexlbGrpcForwarder grpcForwarder,
-            DeliveryMetricsReporter deliveryMetricsReporter,
             ServerScheduleLatencyRecorder serverLatencyRecorder,
             RequestSchedulerReporter requestSchedulerReporter) {
         this.requestEntry = requestEntry;
@@ -108,7 +103,6 @@ public class FlexlbServiceImpl extends FlexlbServiceGrpc.FlexlbServiceImplBase {
         this.masterStatusView = masterStatusView;
         this.serviceMetricsReporter = serviceMetricsReporter;
         this.grpcForwarder = grpcForwarder;
-        this.deliveryMetricsReporter = deliveryMetricsReporter;
         this.serverLatencyRecorder = serverLatencyRecorder;
         this.requestSchedulerReporter = requestSchedulerReporter;
     }
@@ -1342,10 +1336,6 @@ public class FlexlbServiceImpl extends FlexlbServiceGrpc.FlexlbServiceImplBase {
     private static final class InvalidScheduleRequestException extends IllegalArgumentException {
         private InvalidScheduleRequestException(String message) {
             super(message);
-        }
-
-        private InvalidScheduleRequestException(String message, Throwable cause) {
-            super(message, cause);
         }
     }
 

@@ -241,7 +241,6 @@ abstract class AbstractRoutePerformanceTest extends FlexLBMockTestBase {
                         standalone,
                         new ApiMetricsReporter(new NoOpFlexMonitor()),
                         mock(FlexlbGrpcForwarder.class),
-                        reporter,
                         recorder,
                         createRequestSchedulerReporter());
         int port;

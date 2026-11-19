@@ -8,7 +8,6 @@ import io.grpc.stub.StreamObserver;
 import org.flexlb.api.ServerScheduleLatencyRecorder;
 import org.flexlb.api.metrics.ApiMetricsReporter;
 import org.flexlb.api.protocol.FlexlbScheduleProtocol;
-import org.flexlb.balance.metrics.DeliveryMetricsReporter;
 import org.flexlb.balance.metrics.RequestSchedulerReporter;
 import org.flexlb.balance.request.Request;
 import org.flexlb.balance.request.Response;
@@ -70,7 +69,6 @@ class FlexlbServiceImplTest {
     private ApiMetricsReporter serviceMetricsReporter;
     private FlexlbGrpcForwarder grpcForwarder;
     private ConfigService configService;
-    private DeliveryMetricsReporter deliveryMetricsReporter;
     private ServerScheduleLatencyRecorder serverLatencyRecorder;
     private RequestSchedulerReporter requestSchedulerReporter;
     private FlexlbServiceImpl service;
@@ -85,7 +83,6 @@ class FlexlbServiceImplTest {
         masterStatusService = mock(MasterStatusService.class);
         serviceMetricsReporter = mock(ApiMetricsReporter.class);
         grpcForwarder = mock(FlexlbGrpcForwarder.class);
-        deliveryMetricsReporter = mock(DeliveryMetricsReporter.class);
         serverLatencyRecorder = mock(ServerScheduleLatencyRecorder.class);
 
         configService = mock(ConfigService.class);
@@ -1550,7 +1547,6 @@ class FlexlbServiceImplTest {
                         serviceMetricsReporter,
                         grpcForwarder,
                         configService,
-                        deliveryMetricsReporter,
                         serverLatencyRecorder,
                         requestSchedulerReporter);
     }

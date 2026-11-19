@@ -2,7 +2,6 @@ package org.flexlb.api.server;
 
 import org.flexlb.api.ServerScheduleLatencyRecorder;
 import org.flexlb.api.metrics.ApiMetricsReporter;
-import org.flexlb.balance.metrics.DeliveryMetricsReporter;
 import org.flexlb.balance.metrics.RequestSchedulerReporter;
 import org.flexlb.balance.schedule.AbstractRequestScheduler;
 import org.flexlb.balance.schedule.RequestContext;
@@ -21,7 +20,6 @@ public final class FlexlbServiceTestSupport {
             ApiMetricsReporter health,
             FlexlbGrpcForwarder forwarder,
             ConfigService config,
-            DeliveryMetricsReporter batches,
             ServerScheduleLatencyRecorder latency,
             RequestSchedulerReporter reporter) {
         if (org.mockito.Mockito.mockingDetails(leadership).isMock()) {
@@ -55,7 +53,6 @@ public final class FlexlbServiceTestSupport {
                         leadership,
                         health,
                         forwarder,
-                        batches,
                         latency,
                         reporter);
         return service;
