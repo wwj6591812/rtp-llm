@@ -48,35 +48,10 @@ public abstract class PrefillSelectionStrategy
         remoteDiscount = prefill.getRemoteDiscount();
     }
 
+    @Override
     public SelectionResult<RoleSelection, CapacityKey> selectAndRegister(
-            RequestContext context, RoleType role, String group) {
-        var candidates = endpoints.<PrefillEndpoint>endpoints(role, null);
-        var request = context.getRequest();
-        var matches =
-                candidates.isEmpty()
-                        ? null
-                        : cacheService.findMatchingEngines(
-                                new org.flexlb.cache.CacheMatchQuery(
-                                        request.getRequestId(),
-                                        request.getBlockCacheKeys(),
-                                        request.getBlockSize(),
-                                        role,
-                                        group));
-        var scope = new CapacityKey(role, group, null);
-        return selectCandidates(
-                context,
-                scope,
-                candidates,
-                (current, rankingCandidates) -> {
-                    var ranked = cacheCandidates(request, group, rankingCandidates, matches);
-                    if (!current.isEmpty()) {
-                        var selected = chooseBest(request, group, current, matches, ranked);
-                        if (selected.isPresent()) return SelectionResult.success(selected.get());
-                    }
-                    return SelectionResult.<Selection, CapacityKey>blocked(
-                                    scope, Response.error(StrategyErrorType.forRole(role)), null)
-                            .withCandidates(ranked.generations());
-                });
+            RequestContext context, String group) {
+        return selectPrefill(context, RoleType.PREFILL, group);
     }
 
     public abstract java.util.Optional<Selection> chooseBest(
@@ -135,7 +110,10 @@ public abstract class PrefillSelectionStrategy
     }
 
     protected CacheCandidates cacheCandidates(
-            Request request, String group, List<PrefillEndpoint> inputs, CacheMatchResult matches) {
+            Request request,
+            String group,
+            Iterable<PrefillEndpoint> inputs,
+            CacheMatchResult matches) {
         return UNRESTRICTED;
     }
 
@@ -202,9 +180,50 @@ public abstract class PrefillSelectionStrategy
         return selected.input();
     }
 
-    @Override
-    protected PrefillEndpoint refresh(PrefillEndpoint candidate) {
-        return candidate;
+    SelectionResult<RoleSelection, CapacityKey> selectAndRegisterFusion(
+            RequestContext context, String group) {
+        return selectPrefill(context, RoleType.PDFUSION, group);
+    }
+
+    private SelectionResult<RoleSelection, CapacityKey> selectPrefill(
+            RequestContext context, RoleType role, String group) {
+        var candidates = endpoints.<PrefillEndpoint>endpoints(role, null);
+        var request = context.getRequest();
+        var matches =
+                candidates.isEmpty()
+                        ? null
+                        : cacheService.findMatchingEngines(
+                                new org.flexlb.cache.CacheMatchQuery(
+                                        request.getRequestId(),
+                                        request.getBlockCacheKeys(),
+                                        request.getBlockSize(),
+                                        role,
+                                        group));
+        var scope = new CapacityKey(role, group, null);
+        var registration = new RegistrationCandidates<>(candidates);
+        var result =
+                selectCandidates(
+                        context,
+                        scope,
+                        registration,
+                        current -> {
+                            var leaders =
+                                    cacheCandidates(
+                                            request, group, registration.includingFull(), matches);
+                            var selected = chooseBest(request, group, current, matches, leaders);
+                            return selected.isPresent()
+                                    ? SelectionResult.success(selected.get())
+                                    : SelectionResult.<Selection, CapacityKey>blocked(
+                                                    scope,
+                                                    Response.error(StrategyErrorType.forRole(role)),
+                                                    null)
+                                            .withCandidates(leaders.generations());
+                        });
+        if (!registration.onlyFullWorkersRemain()) return result;
+        var leaders = cacheCandidates(request, group, registration.includingFull(), matches);
+        return leaders.generations().isEmpty()
+                ? result
+                : result.withCandidates(leaders.generations());
     }
 
     private static long matchingBlockSize(

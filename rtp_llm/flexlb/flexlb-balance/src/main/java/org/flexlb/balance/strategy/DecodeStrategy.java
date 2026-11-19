@@ -122,6 +122,7 @@ public class DecodeStrategy
         }
     }
 
+    @Override
     public SelectionResult<RoleSelection, CapacityKey> selectAndRegister(
             RequestContext context, String group) {
         DecodeInputs cached = DECODE_INPUTS.get();
@@ -132,7 +133,8 @@ public class DecodeStrategy
             return selectCandidates(
                     context,
                     scope,
-                    endpoints.<DecodeEndpoint>endpoints(RoleType.DECODE, null),
+                    new RegistrationCandidates<>(
+                            endpoints.<DecodeEndpoint>endpoints(RoleType.DECODE, null)),
                     candidates -> chooseDecode(context, group, candidates, inputs));
         } finally {
             int captured = inputs.decode.size();
@@ -153,11 +155,6 @@ public class DecodeStrategy
             RequestContext context, RoleType role, String group, Selection selected) {
         return registerDecode(
                 context.getRequest(), context.getSchedulingMetadata(), selected.snapshot());
-    }
-
-    @Override
-    protected DecodeEndpoint refresh(DecodeEndpoint candidate) {
-        return candidate;
     }
 
     @Override

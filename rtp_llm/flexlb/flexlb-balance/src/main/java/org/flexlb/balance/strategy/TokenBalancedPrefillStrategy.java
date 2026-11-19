@@ -47,7 +47,10 @@ public final class TokenBalancedPrefillStrategy extends PrefillSelectionStrategy
 
     @Override
     protected CacheCandidates cacheCandidates(
-            Request request, String group, List<PrefillEndpoint> inputs, CacheMatchResult matches) {
+            Request request,
+            String group,
+            Iterable<PrefillEndpoint> inputs,
+            CacheMatchResult matches) {
         long maximum = 0L;
         var generations = new java.util.HashSet<Long>();
         for (var candidate : inputs) {

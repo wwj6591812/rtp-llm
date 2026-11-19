@@ -1,10 +1,11 @@
 package org.flexlb.balance.strategy;
 
-import org.flexlb.balance.strategy.StrategyTestSupport.Selection;
+import org.flexlb.balance.request.Request;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.config.service.RoleType;
 import org.flexlb.worker.endpoint.EndpointRegistry;
+import org.flexlb.worker.status.ServerStatus;
 import org.flexlb.worker.status.WorkerStatus;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,7 +19,6 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -46,38 +46,28 @@ class VitStrategyTest {
     }
 
     @Test
-    void rejectsNonVitSelection() {
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> StrategyTestSupport.select(endpoints, strategy, 1L, RoleType.PREFILL, null));
-    }
-
-    @Test
     void returnsNullWithoutVitWorkers() {
-        assertNull(StrategyTestSupport.select(endpoints, strategy, 2L, RoleType.VIT, null));
+        assertNull(select(strategy, 2L, null));
     }
 
     @Test
     void returnsPinnedVitMetadata() {
         registerVit("127.0.0.3", 8080, "group-a");
 
-        {
-            Selection selected =
-                    StrategyTestSupport.select(endpoints, strategy, 3L, RoleType.VIT, "group-a");
-            assertNotNull(selected);
-            assertEquals(RoleType.VIT, StrategyTestSupport.vit(selected).getRole());
-            assertEquals("3", StrategyTestSupport.vit(selected).getRequestId());
-            assertEquals("127.0.0.3", StrategyTestSupport.vit(selected).getServerIp());
-            assertEquals(8080, StrategyTestSupport.vit(selected).getHttpPort());
-            assertEquals(8081, StrategyTestSupport.vit(selected).getGrpcPort());
-            assertEquals("group-a", StrategyTestSupport.vit(selected).getGroup());
-        }
+        var selected = select(strategy, 3L, "group-a");
+        assertNotNull(selected);
+        assertEquals(RoleType.VIT, selected.getRole());
+        assertEquals("3", selected.getRequestId());
+        assertEquals("127.0.0.3", selected.getServerIp());
+        assertEquals(8080, selected.getHttpPort());
+        assertEquals(8081, selected.getGrpcPort());
+        assertEquals("group-a", selected.getGroup());
     }
 
     @Test
     void skipsOtherGroups() {
         registerVit("127.0.0.4", 8080, "group-a");
-        assertNull(StrategyTestSupport.select(endpoints, strategy, 4L, RoleType.VIT, "group-b"));
+        assertNull(select(strategy, 4L, "group-b"));
     }
 
     @Test
@@ -88,13 +78,9 @@ class VitStrategyTest {
         Map<String, Integer> counts = new HashMap<>();
 
         for (int request = 0; request < 3_000; request++) {
-            {
-                Selection selected =
-                        StrategyTestSupport.select(
-                                endpoints, strategy, 10_000L + request, RoleType.VIT, null);
-                assertNotNull(selected);
-                counts.merge(StrategyTestSupport.vit(selected).getServerIp(), 1, Integer::sum);
-            }
+            var selected = select(strategy, 10_000L + request, null);
+            assertNotNull(selected);
+            counts.merge(selected.getServerIp(), 1, Integer::sum);
         }
 
         assertEquals(3, counts.size());
@@ -111,31 +97,27 @@ class VitStrategyTest {
         registerVit("127.0.0.2", 8080, "target");
         registerVit("127.0.0.3", 8080, "target");
         registerVit("127.0.0.4", 8080, "other");
-        EndpointRegistry cacheManager = Mockito.spy(endpoints);
+        EndpointRegistry groupedEndpoints = Mockito.spy(endpoints);
         Mockito.doReturn(
                         List.of(
                                 endpoints.getEndpoint(RoleType.VIT, "127.0.0.1:8080@0"),
                                 endpoints.getEndpoint(RoleType.VIT, "127.0.0.2:8080@0"),
                                 endpoints.getEndpoint(RoleType.VIT, "127.0.0.3:8080@0"),
                                 endpoints.getEndpoint(RoleType.VIT, "127.0.0.4:8080@0")))
-                .when(cacheManager)
+                .when(groupedEndpoints)
                 .endpoints(
                         org.mockito.ArgumentMatchers.eq(RoleType.VIT),
                         org.mockito.ArgumentMatchers.any());
         VitStrategy grouped =
                 new VitStrategy(
                         org.mockito.Mockito.mock(org.flexlb.cache.VitWorkerCacheManager.class),
-                        endpoints);
+                        groupedEndpoints);
         Map<String, Integer> counts = new HashMap<>();
         for (int request = 0; request < 4_000; request++) {
-            {
-                Selection selected =
-                        StrategyTestSupport.select(
-                                cacheManager, grouped, request, RoleType.VIT, "target");
-                assertNotNull(selected);
-                assertEquals("target", StrategyTestSupport.vit(selected).getGroup());
-                counts.merge(StrategyTestSupport.vit(selected).getServerIp(), 1, Integer::sum);
-            }
+            var selected = select(grouped, request, "target");
+            assertNotNull(selected);
+            assertEquals("target", selected.getGroup());
+            counts.merge(selected.getServerIp(), 1, Integer::sum);
         }
         assertEquals(2, counts.size());
         counts.forEach(
@@ -143,6 +125,16 @@ class VitStrategyTest {
                         assertTrue(
                                 count > 1_600 && count < 2_400,
                                 worker + " was selected " + count + " times"));
+    }
+
+    private ServerStatus select(VitStrategy selector, long id, String group) {
+        var request = Request.builder().requestId(String.valueOf(id)).build();
+        var context = StrategyTestSupport.scope(request).context();
+        var result = selector.selectAndRegister(context, group);
+        if (result.status() == SelectionResult.Status.SUCCESS)
+            return result.value().toServerStatus(context.getRequestId());
+        assertEquals(SelectionResult.Status.BLOCKED, result.status());
+        return null;
     }
 
     private void registerVit(String ip, int port, String group) {

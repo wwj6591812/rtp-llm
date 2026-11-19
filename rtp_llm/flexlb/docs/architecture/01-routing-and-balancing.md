@@ -8,7 +8,8 @@ Endpoint 不接收完整调度请求，也不构造调度响应：Decode 容量�
 `RequestRoutingService` 接收本地请求，负责 VIT 单独选址、已有 VIT 选择复核和成功后的缓存反馈；
 普通请求交给 Scheduler。API 负责协议转换和响应交付。
 
-角色选址入口是 `RequestRouteSelector`，协调 Prefill/PDFusion、Decode、VIT、Encoder 的角色策略。
+`RequestRouteSelector` 按角色调用各策略的 `selectAndRegister(context, group)`，入口由 `AbstractWorkerSelectionStrategy` 声明。
+PDFUSION 走 Prefill 策略的融合入口，复用同一套 Prefill 排名与登记逻辑。
 Scheduler 决定何时调度请求、失败后等待还是重试；各角色 Strategy 负责捕获候选、评分和登记。
 P/D/V/E 策略继承 `AbstractWorkerSelectionStrategy`，共用有界登记重试循环；`RequestRouteSelector` 只组合角色结果并负责跨角色回滚。
 
@@ -17,7 +18,7 @@ P/D/V/E 策略继承 `AbstractWorkerSelectionStrategy`，共用有界登记重�
 
 ## 选择与登记
 
-`select(context, group)` 返回 `SelectionResult<RequestRoute, CapacityKey>`；成功值为完整路由，未成功时返回等待、重试、拒绝或关闭原因。
+`RequestRouteSelector.selectAndRegister(context, group)` 返回 `SelectionResult<RequestRoute, CapacityKey>`；成功值为完整路由，未成功时返回等待、重试、拒绝或关闭原因。
 结果直接保存成功选择的角色、失败原因或容量等待条件；成功结果绑定请求与已登记角色。队列和回调沿用该结果的精确身份。VIT 仅选择；Encoder 在选址时登记容量，提交完整路由时关联同一份登记。
 
 1. 校验请求、SchedulingMetadata 和请求指定的角色。`schedule_roles` 必须属于模型配置；
@@ -89,7 +90,8 @@ PrefillTimePredictor.computeTokens 统计输入 tokens 减去可复用缓存 tok
 PrefillSelectionStrategy 抽象基类负责缓存估计、原子登记和重试，具体选点只有两个实现：
 CostBasedPrefillStrategy 按当前工作量加本请求 compute tokens 评分，普通 cacheAffinity 优先缓存命中，
 满载时允许退到其他可接纳节点。TokenBalancedPrefillStrategy 的热请求（有效命中比例严格大于阈值）
-在容量筛选前固定最高命中候选集合；该集合全部满载则等待，不降级到低命中节点。
+先找最高命中节点。登记返回 `CAPACITY_FULL` 时保留该节点的等待资格，继续尝试并列节点；
+登记返回 `UNAVAILABLE` 时排除该节点，按剩余节点重算最高命中。最高命中节点全部满载时等待。
 冷请求比较已有工作量加完整输入长度，不利用低于阈值的缓存亲和。
 两者都检查 admission.maxInflightRequests；只有 TOKEN_BALANCE 启用 Engine 等待水位准入。
 compute tokens 是排序依据，不再是可配置容量上限。

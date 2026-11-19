@@ -95,7 +95,7 @@ class TokenBalancedPrefillStrategyTest {
         var strategy =
                 new TokenBalancedPrefillStrategy(
                         service, endpoints, cache, mock(CacheMetricsReporter.class));
-        var result = strategy.selectAndRegister(context, RoleType.PREFILL, null);
+        var result = strategy.selectAndRegister(context, null);
         assertEquals(SelectionResult.Status.BLOCKED, result.status());
         assertEquals(
                 java.util.Set.of(
@@ -104,9 +104,15 @@ class TokenBalancedPrefillStrategyTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"true, 60", "true, 80", "false, 60", "false, 80"})
+    @CsvSource({
+        "true, 60, false",
+        "true, 80, false",
+        "false, 60, false",
+        "false, 80, false",
+        "false, 80, true"
+    })
     void registrationFailureKeepsOnlyAvailableLeadersInWaitingHints(
-            boolean leaderUnavailable, int nextHit) {
+            boolean leaderUnavailable, int nextHit, boolean nextUnavailable) {
         var service = mock(ConfigService.class);
         when(service.loadBalanceConfig()).thenReturn(new FlexlbConfig());
         var endpoints = mock(EndpointRegistry.class);
@@ -119,7 +125,8 @@ class TokenBalancedPrefillStrategyTest {
         // The old endpoint may still appear healthy after its registry entry has been removed.
         when(endpoints.getEndpoint(RoleType.PREFILL, "leader"))
                 .thenReturn(leaderUnavailable ? null : leader);
-        when(endpoints.getEndpoint(RoleType.PREFILL, "next")).thenReturn(next);
+        when(endpoints.getEndpoint(RoleType.PREFILL, "next"))
+                .thenReturn(nextUnavailable ? null : next);
         when(endpoints.getEndpoint(RoleType.PREFILL, "cooler")).thenReturn(cooler);
         var full =
                 WorkerEndpoint.Registration.<PrefillEndpoint.RequestRegistration>rejected(
@@ -136,14 +143,14 @@ class TokenBalancedPrefillStrategyTest {
                 new TokenBalancedPrefillStrategy(
                         service, endpoints, cache, mock(CacheMetricsReporter.class));
 
-        var result = token.selectAndRegister(context, RoleType.PREFILL, null);
+        var result = token.selectAndRegister(context, null);
 
         long leaderGeneration = leader.getStatus().getGenerationId();
         long nextGeneration = next.getStatus().getGenerationId();
         var expected =
                 leaderUnavailable
                         ? Set.of(nextGeneration)
-                        : nextHit == 80
+                        : nextHit == 80 && !nextUnavailable
                                 ? Set.of(leaderGeneration, nextGeneration)
                                 : Set.of(leaderGeneration);
         assertEquals(SelectionResult.Status.BLOCKED, result.status());

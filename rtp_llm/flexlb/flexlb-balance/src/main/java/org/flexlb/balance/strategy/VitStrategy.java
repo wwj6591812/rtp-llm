@@ -58,6 +58,19 @@ public class VitStrategy
         return response;
     }
 
+    @Override
+    public SelectionResult<RoleSelection, CapacityKey> selectAndRegister(
+            RequestContext context, String group) {
+        var candidates = new ArrayList<VitStrategy.Candidate>();
+        for (var endpoint : workers.endpoints(RoleType.VIT, group)) {
+            if (endpoint != null
+                    && endpoint.acceptsNewRequests()
+                    && (group == null || group.equals(endpoint.getStatus().getGroup())))
+                candidates.add(new VitStrategy.Candidate(endpoint, 0, 0, 0, 0, null));
+        }
+        return registerCandidates(context, group, candidates);
+    }
+
     public Optional<Candidate> select(List<Candidate> candidates) {
         Candidate best = null;
         int ties = 0;
@@ -72,38 +85,9 @@ public class VitStrategy
         return Optional.ofNullable(best);
     }
 
-    public SelectionResult<RoleSelection, CapacityKey> select(
-            RequestContext context, String group) {
-        var candidates = new ArrayList<VitStrategy.Candidate>();
-        for (var endpoint : workers.endpoints(RoleType.VIT, group)) {
-            if (endpoint != null
-                    && endpoint.acceptsNewRequests()
-                    && (group == null || group.equals(endpoint.getStatus().getGroup())))
-                candidates.add(new VitStrategy.Candidate(endpoint, 0, 0, 0, 0, null));
-        }
-        var scope = new CapacityKey(RoleType.VIT, group, null);
-        return selectCandidates(
-                context,
-                scope,
-                candidates,
-                current ->
-                        this.select(current)
-                                .map(
-                                        candidate ->
-                                                SelectionResult
-                                                        .<VitStrategy.Candidate, CapacityKey>
-                                                                success(candidate))
-                                .orElseGet(() -> SelectionResult.blocked(scope)));
-    }
-
     @Override
     protected Candidate candidate(Candidate selected) {
         return selected;
-    }
-
-    @Override
-    protected Candidate refresh(Candidate candidate) {
-        return candidate;
     }
 
     @Override
@@ -175,28 +159,25 @@ public class VitStrategy
                             cacheManager.pendingHits(candidate, keys, now),
                             candidate));
         }
-        var result =
-                selectCandidates(
-                        ctx,
-                        new CapacityKey(RoleType.VIT, group, null),
-                        evaluated,
-                        current ->
-                                select(current)
-                                        .map(
-                                                value ->
-                                                        SelectionResult
-                                                                .<Candidate, CapacityKey>success(
-                                                                        value))
-                                        .orElseGet(
-                                                () ->
-                                                        SelectionResult.blocked(
-                                                                new CapacityKey(
-                                                                        RoleType.VIT,
-                                                                        group,
-                                                                        null))));
+        var result = registerCandidates(ctx, group, evaluated);
         return result.status() == SelectionResult.Status.SUCCESS
                 ? result
                 : SelectionResult.rejected(Response.error(StrategyErrorType.NO_VIT_WORKER));
+    }
+
+    private SelectionResult<RoleSelection, CapacityKey> registerCandidates(
+            RequestContext context, String group, List<Candidate> scored) {
+        var scope = new CapacityKey(RoleType.VIT, group, null);
+        return selectCandidates(
+                context,
+                scope,
+                new RegistrationCandidates<>(scored),
+                remaining -> {
+                    var selected = select(remaining);
+                    return selected.isPresent()
+                            ? SelectionResult.success(selected.get())
+                            : SelectionResult.blocked(scope);
+                });
     }
 
     private static int compare(Candidate left, Candidate right) {

@@ -68,7 +68,7 @@ class RequestOrderTokenBalanceTest {
                             service, registry, cache, mock(CacheMetricsReporter.class));
             var occupied =
                     oldLeader
-                            .tryRegisterSelection("occupied", oldLeader.selectionSnapshot(), 0)
+                            .tryRegisterSelection("occupied", oldLeader.selectionSnapshot(), 0, -1L)
                             .value();
             var oldCapacity = oldLeader.requestCapacity();
             var newCapacity = newLeader.requestCapacity();
@@ -76,7 +76,7 @@ class RequestOrderTokenBalanceTest {
             var request = request(config, "waiting", 90);
             ordered.add(request);
             var waiting = new CapacityWaitQueue();
-            var blocked = strategy.selectAndRegister(request, RoleType.PREFILL, null);
+            var blocked = strategy.selectAndRegister(request, null);
             assertEquals(SelectionResult.Status.BLOCKED, blocked.status());
             assertEquals(
                     java.util.Set.of(oldLeader.getStatus().getGenerationId()),
@@ -97,7 +97,7 @@ class RequestOrderTokenBalanceTest {
                     List.of(request),
                     ordered.scanForPlanningCandidates(1, 2, waiting::canSchedule));
             assertTrue(waiting.tryStartRetry(request));
-            var selected = strategy.selectAndRegister(request, RoleType.PREFILL, null);
+            var selected = strategy.selectAndRegister(request, null);
             assertEquals(SelectionResult.Status.SUCCESS, selected.status());
             assertSame(newLeader, selected.value().endpoint());
             assertEquals(
@@ -155,11 +155,13 @@ class RequestOrderTokenBalanceTest {
                             service, registry, cache, mock(CacheMetricsReporter.class));
             var firstOccupied =
                     firstLeader
-                            .tryRegisterSelection("occupied-a", firstLeader.selectionSnapshot(), 0)
+                            .tryRegisterSelection(
+                                    "occupied-a", firstLeader.selectionSnapshot(), 0, -1L)
                             .value();
             var secondOccupied =
                     secondLeader
-                            .tryRegisterSelection("occupied-b", secondLeader.selectionSnapshot(), 0)
+                            .tryRegisterSelection(
+                                    "occupied-b", secondLeader.selectionSnapshot(), 0, -1L)
                             .value();
             var ordered = new OrderedRequestQueue(priority, false);
             var first = request(config, "first", 90);
@@ -168,7 +170,7 @@ class RequestOrderTokenBalanceTest {
             ordered.add(second);
             var waiting = new CapacityWaitQueue();
             for (var request : List.of(first, second)) {
-                var blocked = strategy.selectAndRegister(request, RoleType.PREFILL, null);
+                var blocked = strategy.selectAndRegister(request, null);
                 assertEquals(SelectionResult.Status.BLOCKED, blocked.status());
                 waiting.park(request, blocked.blocker(), blocked.candidateGenerations());
             }
@@ -178,7 +180,7 @@ class RequestOrderTokenBalanceTest {
             assertEquals(
                     List.of(first), ordered.scanForPlanningCandidates(1, 2, waiting::canSchedule));
             assertTrue(waiting.tryStartRetry(first));
-            var stillBlocked = strategy.selectAndRegister(first, RoleType.PREFILL, null);
+            var stillBlocked = strategy.selectAndRegister(first, null);
             assertEquals(SelectionResult.Status.BLOCKED, stillBlocked.status());
             waiting.park(first, stillBlocked.blocker(), stillBlocked.candidateGenerations());
             assertFalse(waiting.canSchedule(second), "the first attempt spent this round's slot");
@@ -189,7 +191,7 @@ class RequestOrderTokenBalanceTest {
                     List.of(second), ordered.scanForPlanningCandidates(1, 2, waiting::canSchedule));
             assertTrue(waiting.tryStartRetry(second));
             assertEquals(1, firstLeader.selectionSnapshot().outstandingRequests());
-            var selected = strategy.selectAndRegister(second, RoleType.PREFILL, null);
+            var selected = strategy.selectAndRegister(second, null);
             assertEquals(SelectionResult.Status.SUCCESS, selected.status());
             assertSame(secondLeader, selected.value().endpoint());
             waiting.remove(second);
@@ -201,7 +203,7 @@ class RequestOrderTokenBalanceTest {
             assertEquals(
                     List.of(first), ordered.scanForPlanningCandidates(1, 2, waiting::canSchedule));
             assertTrue(waiting.tryStartRetry(first));
-            var firstSelected = strategy.selectAndRegister(first, RoleType.PREFILL, null);
+            var firstSelected = strategy.selectAndRegister(first, null);
             assertEquals(SelectionResult.Status.SUCCESS, firstSelected.status());
             assertSame(firstLeader, firstSelected.value().endpoint());
             waiting.remove(first);
@@ -274,7 +276,7 @@ class RequestOrderTokenBalanceTest {
             var first = priority ? expensive : cheap;
             var second = priority ? cheap : expensive;
             assertEquals(List.of(first), queue.scanForPlanningCandidates(1, 10, r -> true));
-            var selected = strategy.selectAndRegister(first, RoleType.PREFILL, null);
+            var selected = strategy.selectAndRegister(first, null);
             assertEquals(SelectionResult.Status.SUCCESS, selected.status());
             assertSame(leader, selected.value().endpoint());
             assertEquals(priority ? 80L : 20L, selected.value().computeTokens());
@@ -285,18 +287,18 @@ class RequestOrderTokenBalanceTest {
             assertEquals(List.of(second), queue.scanForPlanningCandidates(1, 10, r -> true));
             assertEquals(
                     SelectionResult.Status.BLOCKED,
-                    strategy.selectAndRegister(second, RoleType.PREFILL, null).status());
+                    strategy.selectAndRegister(second, null).status());
             assertEquals(0, alternate.selectionSnapshot().outstandingRequests());
             assertTrue(leader.rollbackSelection(selected.value().registration()));
             if (engineQueueFull) {
                 assertEquals(
                         SelectionResult.Status.BLOCKED,
-                        strategy.selectAndRegister(second, RoleType.PREFILL, null).status());
+                        strategy.selectAndRegister(second, null).status());
                 reportWaiting(leader, 0);
             }
             queue.retry(second);
             assertEquals(List.of(second), queue.scanForPlanningCandidates(1, 10, r -> true));
-            var resumed = strategy.selectAndRegister(second, RoleType.PREFILL, null);
+            var resumed = strategy.selectAndRegister(second, null);
             assertEquals(SelectionResult.Status.SUCCESS, resumed.status());
             assertSame(leader, resumed.value().endpoint());
             assertTrue(leader.rollbackSelection(resumed.value().registration()));

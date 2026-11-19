@@ -1,7 +1,6 @@
 package org.flexlb.balance.strategy;
 
 import org.flexlb.balance.metrics.DeliveryMetricsReporter;
-import org.flexlb.balance.schedule.EngineCancellation;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.config.service.RoleType;
@@ -24,9 +23,6 @@ import static org.flexlb.worker.status.WorkerStatusTestSupport.createDiscovered;
  * Package-local fixtures built only from the frozen endpoint-facing ports.
  */
 final class StrategyTestSupport {
-
-    private static final DeliveryMetricsReporter NOOP_METRICS =
-            Mockito.mock(DeliveryMetricsReporter.class);
 
     private StrategyTestSupport() {}
 
@@ -77,59 +73,17 @@ final class StrategyTestSupport {
         return select(request, route -> selector.select(request, metadata, role, group, route));
     }
 
-    static Selection select(
-            EndpointRegistry endpoints,
-            VitStrategy selector,
-            long id,
-            RoleType role,
-            String group) {
-        Selection route =
-                scope(
-                        org.flexlb.balance.request.Request.builder()
-                                .requestId(String.valueOf(id))
-                                .build());
-        com.google.common.base.Preconditions.checkArgument(role == RoleType.VIT);
-        ConfigService configService = Mockito.mock(ConfigService.class);
-        Mockito.when(configService.loadBalanceConfig()).thenReturn(config());
-        var router =
-                new org.flexlb.balance.strategy.RequestRouteSelector(
-                        endpoints,
-                        Mockito.mock(CostBasedPrefillStrategy.class),
-                        Mockito.mock(DecodeStrategy.class),
-                        selector,
-                        org.mockito.Mockito.mock(EncoderStrategy.class),
-                        Mockito.mock(org.flexlb.config.service.ModelMetaConfig.class));
-        SelectionResult<?, ?> result = selector.select(route.context(), group);
-        if (result.status() == SelectionResult.Status.SUCCESS)
-            route.roles().add((org.flexlb.balance.strategy.RoleSelection) result.value());
-        return result.status() == SelectionResult.Status.SUCCESS ? route : null;
-    }
-
-    static org.flexlb.worker.status.ServerStatus vit(Selection route) {
-        var selected = route.role(RoleType.VIT);
-        return selected == null ? null : selected.toServerStatus(route.requestId());
-    }
-
     static WorkerEndpoint decodeEndpoint(Selection route) {
         return route.role(RoleType.DECODE).endpoint();
     }
 
     static EndpointRegistry endpointRegistry(ConfigService configService) {
-        var requests = new org.flexlb.balance.schedule.RequestRepository();
-        EngineCancellation delivery = parkedDelivery();
         return new EndpointRegistry(
                 configService,
-                requests,
+                new org.flexlb.balance.schedule.RequestRepository(),
                 Mockito.mock(DeliveryMetricsReporter.class),
                 new CapacityNotifier(),
                 org.mockito.Mockito.mock(org.flexlb.cache.match.CacheAwareService.class));
-    }
-
-    /**
-     * Keep selection-owned queues parked without replacing admission internals.
-     */
-    static EngineCancellation parkedDelivery() {
-        return org.flexlb.balance.schedule.DeliveryTestSupport.route(NOOP_METRICS);
     }
 
     static WorkerStatus workerStatus(

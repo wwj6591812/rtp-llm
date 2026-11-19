@@ -145,16 +145,17 @@ public class RequestRouteSelector {
                     continue;
                 }
                 context.beginRoutingAttempt(role);
-                SelectionResult<RoleSelection, CapacityKey> result =
+                var result =
                         switch (role) {
-                            case PREFILL, PDFUSION ->
-                                    prefillStrategy.selectAndRegister(context, role, group);
+                            case PREFILL -> prefillStrategy.selectAndRegister(context, group);
+                            case PDFUSION ->
+                                    prefillStrategy.selectAndRegisterFusion(context, group);
                             case DECODE -> decodeStrategy.selectAndRegister(context, group);
                             case ENCODER -> encoderStrategy.selectAndRegister(context, group);
-                            case VIT -> vitStrategy.select(context, group);
-                            case FRONTEND ->
+                            case VIT -> vitStrategy.selectAndRegister(context, group);
+                            default ->
                                     throw new IllegalArgumentException(
-                                            "Endpoint selection is not supported for FRONTEND");
+                                            "Endpoint selection is not supported for " + role);
                         };
                 if (result.status() != SelectionResult.Status.SUCCESS) {
                     Logger.debug(

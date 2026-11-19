@@ -1,5 +1,6 @@
 package org.flexlb.balance.strategy;
 
+import org.flexlb.balance.schedule.RequestContext;
 import org.flexlb.config.service.RoleType;
 import org.flexlb.worker.endpoint.CapacityKey;
 import org.flexlb.worker.endpoint.WorkerEndpoint;
@@ -20,77 +21,84 @@ class AbstractWorkerSelectionStrategyTest {
     private final RoleSelection registered = mock(RoleSelection.class);
 
     @Test
-    void conflictRefreshesOnlyTheSelectedCandidate() {
-        Object stale = new Object(), fresh = new Object();
-        var calls = new AtomicInteger();
+    void conflictRerunsSelectionWithTheSameCandidate() {
+        var worker = mock(WorkerEndpoint.class);
+        var registrations = new AtomicInteger();
+        var selections = new AtomicInteger();
         var result =
-                (new AbstractWorkerSelectionStrategy<Object, Object>() {
-                            public Object candidate(Object selected) {
+                (new CandidateLoopStrategy() {
+                            public WorkerEndpoint candidate(WorkerEndpoint selected) {
                                 return selected;
                             }
 
                             public WorkerEndpoint.Registration<RoleSelection> register(
-                                    org.flexlb.balance.schedule.RequestContext context,
+                                    RequestContext context,
                                     RoleType role,
                                     String group,
-                                    Object selected) {
-                                calls.incrementAndGet();
-                                return selected == stale
+                                    WorkerEndpoint selected) {
+                                assertSame(worker, selected);
+                                return registrations.incrementAndGet() == 1
                                         ? WorkerEndpoint.Registration.rejected(
                                                 WorkerEndpoint.RegistrationStatus.VERSION_CONFLICT)
                                         : new WorkerEndpoint.Registration<>(
                                                 WorkerEndpoint.RegistrationStatus.REGISTERED,
                                                 registered);
                             }
-
-                            public Object refresh(Object candidate) {
-                                assertSame(stale, candidate);
-                                return fresh;
-                            }
                         })
                         .selectCandidates(
                                 null,
                                 scope,
-                                List.of(stale),
-                                list -> SelectionResult.success(list.getFirst()));
+                                new AbstractWorkerSelectionStrategy.RegistrationCandidates<>(
+                                        List.of(worker)),
+                                list -> {
+                                    selections.incrementAndGet();
+                                    return SelectionResult.success(list.getFirst());
+                                });
         assertSame(registered, result.value());
-        assertEquals(2, calls.get());
+        assertEquals(2, registrations.get());
+        assertEquals(2, selections.get());
     }
 
-    @Test
-    void fullCandidatesDoNotConsumeTheVersionConflictBudgetOrModifyTheSourceList() {
-        List<Integer> source = java.util.stream.IntStream.range(0, 20).boxed().toList();
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+    void fullCandidatesDoNotConsumeTheVersionConflictBudgetOrModifyTheSourceList(
+            boolean lastWorkerFits) {
+        List<WorkerEndpoint> source =
+                java.util.stream.IntStream.range(0, 20)
+                        .mapToObj(i -> mock(WorkerEndpoint.class))
+                        .toList();
         var calls = new AtomicInteger();
         var result =
-                (new AbstractWorkerSelectionStrategy<Integer, Integer>() {
-                            public Integer candidate(Integer selected) {
+                (new CandidateLoopStrategy() {
+                            public WorkerEndpoint candidate(WorkerEndpoint selected) {
                                 return selected;
                             }
 
                             public WorkerEndpoint.Registration<RoleSelection> register(
-                                    org.flexlb.balance.schedule.RequestContext context,
+                                    RequestContext context,
                                     RoleType role,
                                     String group,
-                                    Integer selected) {
+                                    WorkerEndpoint selected) {
                                 calls.incrementAndGet();
-                                return selected == 19
+                                return lastWorkerFits && selected == source.getLast()
                                         ? new WorkerEndpoint.Registration<>(
                                                 WorkerEndpoint.RegistrationStatus.REGISTERED,
                                                 registered)
                                         : WorkerEndpoint.Registration.rejected(
                                                 WorkerEndpoint.RegistrationStatus.CAPACITY_FULL);
                             }
-
-                            public Integer refresh(Integer candidate) {
-                                throw new AssertionError("full candidate cannot be refreshed");
-                            }
                         })
                         .selectCandidates(
                                 null,
                                 scope,
-                                source,
+                                new AbstractWorkerSelectionStrategy.RegistrationCandidates<>(
+                                        source),
                                 list -> SelectionResult.success(list.getFirst()));
-        assertSame(registered, result.value());
+        if (lastWorkerFits) assertSame(registered, result.value());
+        else {
+            assertEquals(SelectionResult.Status.BLOCKED, result.status());
+            assertEquals(scope, result.blocker());
+        }
         assertEquals(20, calls.get());
         assertEquals(20, source.size());
     }
@@ -98,31 +106,28 @@ class AbstractWorkerSelectionStrategyTest {
     @Test
     void repeatedConflictsReturnToSchedulerAfterEightRegistrations() {
         var calls = new AtomicInteger();
-        Object candidate = new Object();
+        WorkerEndpoint candidate = mock(WorkerEndpoint.class);
         var result =
-                (new AbstractWorkerSelectionStrategy<Object, Object>() {
-                            public Object candidate(Object selected) {
+                (new CandidateLoopStrategy() {
+                            public WorkerEndpoint candidate(WorkerEndpoint selected) {
                                 return selected;
                             }
 
                             public WorkerEndpoint.Registration<RoleSelection> register(
-                                    org.flexlb.balance.schedule.RequestContext context,
+                                    RequestContext context,
                                     RoleType role,
                                     String group,
-                                    Object selected) {
+                                    WorkerEndpoint selected) {
                                 calls.incrementAndGet();
                                 return WorkerEndpoint.Registration.rejected(
                                         WorkerEndpoint.RegistrationStatus.VERSION_CONFLICT);
-                            }
-
-                            public Object refresh(Object original) {
-                                return original;
                             }
                         })
                         .selectCandidates(
                                 null,
                                 scope,
-                                List.of(candidate),
+                                new AbstractWorkerSelectionStrategy.RegistrationCandidates<>(
+                                        List.of(candidate)),
                                 list -> SelectionResult.success(list.getFirst()));
         assertEquals(SelectionResult.Status.RETRY, result.status());
         assertEquals(8, calls.get());
@@ -132,27 +137,39 @@ class AbstractWorkerSelectionStrategyTest {
     void rejectedSelectionNeverRegistersResources() {
         var calls = new AtomicInteger();
         var result =
-                (new AbstractWorkerSelectionStrategy<Object, Object>() {
-                            public Object candidate(Object selected) {
+                (new CandidateLoopStrategy() {
+                            public WorkerEndpoint candidate(WorkerEndpoint selected) {
                                 throw new AssertionError();
                             }
 
                             public WorkerEndpoint.Registration<RoleSelection> register(
-                                    org.flexlb.balance.schedule.RequestContext context,
+                                    RequestContext context,
                                     RoleType role,
                                     String group,
-                                    Object selected) {
+                                    WorkerEndpoint selected) {
                                 calls.incrementAndGet();
-                                throw new AssertionError();
-                            }
-
-                            public Object refresh(Object original) {
                                 throw new AssertionError();
                             }
                         })
                         .selectCandidates(
-                                null, scope, List.of(), list -> SelectionResult.blocked(scope));
+                                null,
+                                scope,
+                                new AbstractWorkerSelectionStrategy.RegistrationCandidates<>(
+                                        List.of()),
+                                list -> SelectionResult.blocked(scope));
         assertEquals(SelectionResult.Status.BLOCKED, result.status());
         assertEquals(0, calls.get());
+    }
+
+    /**
+     * Exercises the shared candidate loop without constructing a full role selection.
+     */
+    private abstract static class CandidateLoopStrategy
+            extends AbstractWorkerSelectionStrategy<WorkerEndpoint, WorkerEndpoint> {
+        @Override
+        public SelectionResult<RoleSelection, CapacityKey> selectAndRegister(
+                RequestContext context, String group) {
+            throw new UnsupportedOperationException("test calls the candidate loop directly");
+        }
     }
 }

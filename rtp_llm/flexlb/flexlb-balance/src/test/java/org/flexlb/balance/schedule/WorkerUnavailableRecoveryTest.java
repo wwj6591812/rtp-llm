@@ -3,6 +3,7 @@ package org.flexlb.balance.schedule;
 import org.flexlb.balance.metrics.DeliveryMetricsReporter;
 import org.flexlb.balance.metrics.RequestSchedulerReporter;
 import org.flexlb.balance.request.Request;
+import org.flexlb.balance.request.Response;
 import org.flexlb.balance.requestlog.TheoryCacheHitReporter;
 import org.flexlb.balance.strategy.CostBasedPrefillStrategy;
 import org.flexlb.balance.strategy.DecodeStrategy;
@@ -36,6 +37,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -128,34 +130,63 @@ class WorkerUnavailableRecoveryTest {
             throws Exception {
         try (var f = new Fixture(strategy, mode)) {
             var occupiedA =
-                    f.a.tryRegisterSelection("occupied-a", f.a.selectionSnapshot(), 0).value();
+                    f.a.tryRegisterSelection("occupied-a", f.a.selectionSnapshot(), 0, -1L).value();
             var occupiedB =
-                    f.b.tryRegisterSelection("occupied-b", f.b.selectionSnapshot(), 0).value();
+                    f.b.tryRegisterSelection("occupied-b", f.b.selectionSnapshot(), 0, -1L).value();
             assertNotNull(occupiedA);
             assertNotNull(occupiedB);
-            var blocked = new CountDownLatch(1);
-            doAnswer(
-                            call -> {
-                                var result = (SelectionResult<?, ?>) call.callRealMethod();
-                                if (result.status() == SelectionResult.Status.BLOCKED)
-                                    blocked.countDown();
-                                return result;
-                            })
-                    .when(f.router)
-                    .selectAndRegister(any(), any());
-            var response = f.scheduler.submit(f.request);
-            assertTrue(
-                    blocked.await(1, TimeUnit.SECONDS),
-                    "request must actually encounter full capacity");
-            // Selection finishes only after the scheduler has recorded the blocked result.
-            RequestProtocolTestSupport.awaitCondition(
-                    () -> f.request.currentSelectionAttempt() == null);
-            assertFalse(response.isDone(), "capacity waiting must not publish an error");
+            var response = f.submitAndWaitForCapacity();
             f.a.getStatus().markRemovedFromDiscovery();
             assertTrue(f.b.rollbackSelection(occupiedB));
             f.assertB(response.get(1, TimeUnit.SECONDS));
             assertTrue(f.a.rollbackSelection(occupiedA));
             assertEquals(0, f.a.selectionSnapshot().outstandingRequests());
+        }
+    }
+
+    @ParameterizedTest(name = "{0}/HOT_PREFILL_CAPACITY_RELEASED")
+    @MethodSource("queueModes")
+    void tokenBalanceWaitsForTheHotPrefillToReleaseCapacity(String mode) throws Exception {
+        try (var f = new Fixture("TOKEN_BALANCE", mode)) {
+            var occupied =
+                    f.a.tryRegisterSelection("occupied-a", f.a.selectionSnapshot(), 0, -1L).value();
+            assertNotNull(occupied);
+            var response = f.submitAndWaitForCapacity();
+
+            assertTrue(f.a.rollbackSelection(occupied));
+            assertTrue(response.get(1, TimeUnit.SECONDS).isSuccess());
+            assertSame(f.a, f.request.snapshot().route().prefillEndpoint());
+        }
+    }
+
+    @ParameterizedTest(name = "{0}/NEW_HOT_PREFILL")
+    @MethodSource("queueModes")
+    void tokenBalanceReconsidersNewPrefillWhileTheOriginalLeaderIsFull(String mode)
+            throws Exception {
+        try (var f = new Fixture("TOKEN_BALANCE", mode)) {
+            var discovered = new AtomicBoolean();
+            when(f.registry.<PrefillEndpoint>endpoints(RoleType.PREFILL, null))
+                    .thenAnswer(call -> discovered.get() ? List.of(f.a, f.b) : List.of(f.a));
+            var initialCache = HostCacheMatch.fromLocalMatches(Map.of(f.a.ipPort(), 80));
+            var updatedCache =
+                    HostCacheMatch.fromLocalMatches(Map.of(f.a.ipPort(), 80, f.b.ipPort(), 80));
+            when(f.cache.findMatchingEngines(any()))
+                    .thenAnswer(
+                            call ->
+                                    new CacheMatchResult(
+                                            discovered.get() ? updatedCache : initialCache,
+                                            CacheMatchSource.LOCAL_SYNC,
+                                            0,
+                                            1));
+            var occupied =
+                    f.a.tryRegisterSelection("occupied-a", f.a.selectionSnapshot(), 0, -1L).value();
+            assertNotNull(occupied);
+            var response = f.submitAndWaitForCapacity();
+
+            discovered.set(true);
+            f.assertB(response.get(1, TimeUnit.SECONDS));
+            assertEquals(1, f.a.selectionSnapshot().outstandingRequests());
+            assertTrue(f.a.rollbackSelection(occupied));
         }
     }
 
@@ -298,10 +329,11 @@ class WorkerUnavailableRecoveryTest {
 
     static Stream<Arguments> waitingCases() {
         return profiles()
-                .flatMap(
-                        strategy ->
-                                modes().filter(mode -> !mode.equals("DIRECT"))
-                                        .map(mode -> Arguments.of(strategy, mode)));
+                .flatMap(strategy -> queueModes().map(mode -> Arguments.of(strategy, mode)));
+    }
+
+    static Stream<String> queueModes() {
+        return modes().filter(mode -> !mode.equals("DIRECT"));
     }
 
     private static Stream<String> profiles() {
@@ -453,13 +485,35 @@ class WorkerUnavailableRecoveryTest {
                     "A must not retain the failed attempt");
         }
 
-        void assertB(org.flexlb.balance.request.Response response) {
+        void assertB(Response response) {
             assertTrue(
                     response.isSuccess(),
                     "must recover instead of returning an error: " + response);
             assertSame(b, request.snapshot().route().prefillEndpoint());
             assertEquals(1, b.selectionSnapshot().outstandingRequests());
             assertEquals(1, decode.selectionSnapshot().usage().occupiedRequests());
+        }
+
+        CompletableFuture<Response> submitAndWaitForCapacity() throws InterruptedException {
+            var blocked = new CountDownLatch(1);
+            doAnswer(
+                            call -> {
+                                var result = (SelectionResult<?, ?>) call.callRealMethod();
+                                if (result.status() == SelectionResult.Status.BLOCKED)
+                                    blocked.countDown();
+                                return result;
+                            })
+                    .when(router)
+                    .selectAndRegister(any(), any());
+            var response = scheduler.submit(request);
+            assertTrue(
+                    blocked.await(1, TimeUnit.SECONDS),
+                    "request must actually encounter full capacity");
+            // Selection finishes only after the scheduler has recorded the blocked result.
+            RequestProtocolTestSupport.awaitCondition(
+                    () -> request.currentSelectionAttempt() == null);
+            assertFalse(response.isDone(), "capacity waiting must not publish an error");
+            return response;
         }
 
         private PrefillEndpoint prefill(String ip) {

@@ -38,6 +38,7 @@ public class EncoderStrategy
         return endpoint.requestCapacity(maxRequests);
     }
 
+    @Override
     public SelectionResult<RoleSelection, CapacityKey> selectAndRegister(
             RequestContext context, String group) {
         var candidates = endpoints.<EncoderEndpoint>endpoints(RoleType.ENCODER, group);
@@ -46,7 +47,7 @@ public class EncoderStrategy
         return selectCandidates(
                 context,
                 scope,
-                candidates,
+                new RegistrationCandidates<>(candidates),
                 current -> {
                     var snapshots =
                             new ArrayList<EncoderEndpoint.SelectionSnapshot>(current.size());
@@ -138,11 +139,6 @@ public class EncoderStrategy
                     Failures.run(null, () -> endpoint.rollbackSelection(accepted.value())));
             throw failure;
         }
-    }
-
-    @Override
-    protected EncoderEndpoint refresh(EncoderEndpoint candidate) {
-        return candidate;
     }
 
     @Override
