@@ -27,7 +27,7 @@ class RequestRouteStateTest {
                 EndpointTestSupport.realPrefill(
                         status,
                         SchedulingTestConfig.newConfig(),
-                        org.mockito.Mockito.mock(EngineCancellation.class),
+                        org.mockito.Mockito.mock(EngineRequestCanceller.class),
                         new RequestRepository(),
                         org.mockito.Mockito.mock(
                                 org.flexlb.balance.metrics.DeliveryMetricsReporter.class));

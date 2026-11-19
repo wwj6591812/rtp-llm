@@ -350,7 +350,7 @@ class RequestContextConcurrencyTest {
                                             repository,
                                             mock(java.util.concurrent.ExecutorService.class),
                                             mock(ExpirationTimer.class),
-                                            mock(EngineCancellation.class),
+                                            mock(EngineRequestCanceller.class),
                                             completions,
                                             mock(
                                                     org.flexlb.balance.metrics

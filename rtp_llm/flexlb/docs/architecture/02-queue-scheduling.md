@@ -164,10 +164,10 @@ Decode 抢占由具体 DecodePreemptionPlanner 选择请求，DefaultRequestPree
 DefaultRequestPreemption 报告等待结果是否就绪，并在登记新的抢占等待或收到相关 Endpoint 的容量通知时递增版本。
 QueuedRequestScheduler 在版本变化或定时检查到期时重新检查当前等待，并在有空闲规划线程时派发本轮剩余的检查。
 RequestContext 不保留独立抢占事务、取消阶段或恢复交付协议。
-EngineCancellation 向原引擎发送单请求 Cancel，处理有界重试和晚到回复；一轮耗尽后仍保留精确路由，
+EngineRequestCanceller 向原引擎发送单请求 Cancel，处理有界重试和晚到回复；一轮耗尽后仍保留精确路由，
 由定时恢复入口继续下一轮。关闭时停止恢复并等待已提交回调。
 Scheduler.cancel 记录本地取消并提交清理后返回，不等待引擎回复，也不表示容量已经释放。
-EngineCancellation 通过 Scheduler.onEngineCancelReply 回报结果，由 Scheduler 校验原请求身份、
+EngineRequestCanceller 通过 Scheduler.onEngineCancelReply 回报结果，由 Scheduler 校验原请求身份、
 转换清理事件并推进资源释放；Context 校验具体路由。已归档请求的晚到回复被忽略，
 取消任务持有的 Context 引用不依赖请求仍在活跃索引中。
 取消确认和资源释放使用精确路由、预留及请求身份。

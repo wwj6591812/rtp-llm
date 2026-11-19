@@ -63,7 +63,7 @@ class ApplicationLifecycleTest {
                         mock(org.flexlb.balance.schedule.RequestRepository.class),
                         mock(java.util.concurrent.ExecutorService.class),
                         mock(org.flexlb.balance.schedule.ExpirationTimer.class),
-                        mock(org.flexlb.balance.schedule.EngineCancellation.class),
+                        mock(org.flexlb.balance.schedule.EngineRequestCanceller.class),
                         mock(org.flexlb.balance.schedule.ResponseCompletionExecutor.class),
                         mock(org.flexlb.worker.endpoint.EndpointRegistry.class),
                         0L);
@@ -101,7 +101,7 @@ class ApplicationLifecycleTest {
                             mock(org.flexlb.balance.schedule.RequestRepository.class),
                             mock(java.util.concurrent.ExecutorService.class),
                             mock(org.flexlb.balance.schedule.ExpirationTimer.class),
-                            mock(org.flexlb.balance.schedule.EngineCancellation.class),
+                            mock(org.flexlb.balance.schedule.EngineRequestCanceller.class),
                             mock(org.flexlb.balance.schedule.ResponseCompletionExecutor.class),
                             mock(org.flexlb.worker.endpoint.EndpointRegistry.class),
                             0L);
@@ -142,8 +142,8 @@ class ApplicationLifecycleTest {
                     org.flexlb.balance.schedule.ExpirationTimer.class,
                     () -> mock(org.flexlb.balance.schedule.ExpirationTimer.class));
             context.registerBean(
-                    org.flexlb.balance.schedule.EngineCancellation.class,
-                    () -> mock(org.flexlb.balance.schedule.EngineCancellation.class));
+                    org.flexlb.balance.schedule.EngineRequestCanceller.class,
+                    () -> mock(org.flexlb.balance.schedule.EngineRequestCanceller.class));
             context.registerBean(
                     org.flexlb.balance.schedule.ResponseCompletionExecutor.class,
                     () -> mock(org.flexlb.balance.schedule.ResponseCompletionExecutor.class));
@@ -178,7 +178,7 @@ class ApplicationLifecycleTest {
                         mock(org.flexlb.balance.schedule.RequestRepository.class),
                         mock(java.util.concurrent.ExecutorService.class),
                         mock(org.flexlb.balance.schedule.ExpirationTimer.class),
-                        mock(org.flexlb.balance.schedule.EngineCancellation.class),
+                        mock(org.flexlb.balance.schedule.EngineRequestCanceller.class),
                         mock(org.flexlb.balance.schedule.ResponseCompletionExecutor.class),
                         mock(org.flexlb.worker.endpoint.EndpointRegistry.class),
                         0L);

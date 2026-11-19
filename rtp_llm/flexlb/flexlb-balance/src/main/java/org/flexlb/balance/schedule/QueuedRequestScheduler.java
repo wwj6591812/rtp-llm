@@ -65,7 +65,7 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
             RequestRepository requests,
             ExecutorService requestWork,
             ExpirationTimer deadlines,
-            EngineCancellation engineCancellation,
+            EngineRequestCanceller engineRequestCanceller,
             ResponseCompletionExecutor responseCompletions,
             DeliveryMetricsReporter deliveryReporter,
             TheoryCacheHitReporter cacheTrace,
@@ -75,7 +75,7 @@ public class QueuedRequestScheduler extends AbstractRequestScheduler {
                 requests,
                 requestWork,
                 deadlines,
-                engineCancellation,
+                engineRequestCanceller,
                 responseCompletions,
                 deliveryReporter,
                 cacheTrace);

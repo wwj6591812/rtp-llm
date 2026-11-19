@@ -23,7 +23,7 @@ import static org.mockito.Mockito.when;
  * Verifies that exhausted cancellation rounds retain the exact route and retry until cleanup is confirmed.
  */
 @Timeout(15)
-class EngineCancellationTest {
+class EngineRequestCancellerTest {
     @Test
     void unresolvedRoundRetriesWithoutReleasingTheRoute() throws Exception {
         var context = mock(RequestContext.class, RETURNS_DEEP_STUBS);
@@ -44,10 +44,10 @@ class EngineCancellationTest {
                                         calls.incrementAndGet() <= 8
                                                 ? EngineGrpcClient.CancelReply.FAILED
                                                 : EngineGrpcClient.CancelReply.REQUEST_CLEANED));
-        var cancellation = new EngineCancellation(client);
+        var cancellation = new EngineRequestCanceller(client);
         try {
             cancellation
-                    .stop(
+                    .cancelRequest(
                             route,
                             (exact, reply) -> {
                                 assertSame(route, exact);

@@ -2,7 +2,7 @@ package org.flexlb.worker.endpoint;
 
 import org.flexlb.balance.metrics.DeliveryMetricsReporter;
 import org.flexlb.balance.schedule.AbstractRequestScheduler;
-import org.flexlb.balance.schedule.EngineCancellation;
+import org.flexlb.balance.schedule.EngineRequestCanceller;
 import org.flexlb.balance.schedule.RequestRoute;
 import org.flexlb.config.service.RoleType;
 import org.flexlb.worker.endpoint.WorkerEndpoint.CommitStatus;
@@ -278,7 +278,7 @@ public final class EndpointTestSupport {
     public static PrefillEndpoint prefill(
             WorkerStatus status,
             org.flexlb.config.FlexlbConfig config,
-            EngineCancellation cancellation,
+            EngineRequestCanceller cancellation,
             org.flexlb.balance.schedule.RequestRepository repository,
             DeliveryMetricsReporter reporter) {
         return realPrefill(status, config, cancellation, repository, reporter);
@@ -287,7 +287,7 @@ public final class EndpointTestSupport {
     public static PrefillEndpoint realPrefill(
             WorkerStatus status,
             org.flexlb.config.FlexlbConfig config,
-            EngineCancellation delivery,
+            EngineRequestCanceller delivery,
             org.flexlb.balance.schedule.RequestRepository repository,
             DeliveryMetricsReporter reporter) {
         var endpoint =

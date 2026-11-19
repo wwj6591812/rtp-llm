@@ -6,7 +6,7 @@ import org.flexlb.balance.metrics.RequestSchedulerReporter;
 import org.flexlb.balance.request.Request;
 import org.flexlb.balance.request.Response;
 import org.flexlb.balance.schedule.AbstractRequestScheduler;
-import org.flexlb.balance.schedule.EngineCancellation;
+import org.flexlb.balance.schedule.EngineRequestCanceller;
 import org.flexlb.balance.schedule.RequestContext;
 import org.flexlb.balance.schedule.RequestRoute;
 import org.flexlb.balance.schedule.RequestSchedulerTestRuntime;
@@ -61,7 +61,7 @@ import static org.mockito.Mockito.withSettings;
  * <p>Architecture:
  * <pre>
  * Real AbstractRequestScheduler (test-only composition root)
- *   ├── Real EngineCancellation
+ *   ├── Real EngineRequestCanceller
  *   │     └── Real EngineGrpcClient (real Netty channels)
  *   │           ↕  real gRPC (Netty)
  *   │     MockPrefillWorker (gRPC server, no model)
@@ -87,7 +87,7 @@ public abstract class FlexLBMockTestBase {
     protected ConfigService configService;
     protected RequestRouteSelector router;
     protected EngineGrpcClient grpcClient;
-    protected EngineCancellation dispatcher;
+    protected EngineRequestCanceller dispatcher;
     protected DeliveryMetricsReporter reporter;
     protected EndpointRegistry engineWorkerStatus;
     protected RequestSchedulerTestRuntime schedulerRuntime;
@@ -176,7 +176,7 @@ public abstract class FlexLBMockTestBase {
         reporter = createDeliveryMetricsReporter();
 
         // 5. Create real dispatcher
-        dispatcher = new EngineCancellation(grpcClient);
+        dispatcher = new EngineRequestCanceller(grpcClient);
 
         // 6. Compose the real request lifecycle and endpoint runtime. The
         // router is bound after endpoints and the registry-backed status view

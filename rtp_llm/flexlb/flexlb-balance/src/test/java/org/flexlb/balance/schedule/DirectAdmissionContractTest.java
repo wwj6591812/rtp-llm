@@ -1061,7 +1061,7 @@ class DirectAdmissionContractTest {
         private final FlexlbConfig config = SchedulingTestConfig.newConfig();
         private final AbstractRequestScheduler requests;
         private final EndpointRegistry endpoints;
-        private final EngineCancellation queuedDelivery;
+        private final EngineRequestCanceller queuedDelivery;
         private final PrefillEndpoint prefill;
         private final DecodeEndpoint decode;
         private final CostBasedPrefillStrategy prefillStrategy;

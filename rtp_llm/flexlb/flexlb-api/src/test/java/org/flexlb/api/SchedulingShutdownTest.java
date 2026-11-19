@@ -7,7 +7,7 @@ import org.flexlb.balance.metrics.RequestSchedulerReporter;
 import org.flexlb.balance.request.Request;
 import org.flexlb.balance.request.Response;
 import org.flexlb.balance.schedule.AbstractRequestScheduler;
-import org.flexlb.balance.schedule.EngineCancellation;
+import org.flexlb.balance.schedule.EngineRequestCanceller;
 import org.flexlb.balance.schedule.RequestContext;
 import org.flexlb.balance.schedule.RequestSchedulerTestRuntime;
 import org.flexlb.balance.schedule.SchedulingMetadata;
@@ -102,7 +102,7 @@ class SchedulingShutdownTest {
         try (var runtime =
                 new RequestSchedulerTestRuntime(
                         service,
-                        new EngineCancellation(engine),
+                        new EngineRequestCanceller(engine),
                         mock(DeliveryMetricsReporter.class),
                         mock(RequestSchedulerReporter.class),
                         engine)) {
@@ -154,7 +154,7 @@ class SchedulingShutdownTest {
                 mock(org.flexlb.balance.schedule.RequestRepository.class),
                 mock(java.util.concurrent.ExecutorService.class),
                 mock(org.flexlb.balance.schedule.ExpirationTimer.class),
-                mock(org.flexlb.balance.schedule.EngineCancellation.class),
+                mock(org.flexlb.balance.schedule.EngineRequestCanceller.class),
                 mock(org.flexlb.balance.schedule.ResponseCompletionExecutor.class),
                 mock(org.flexlb.worker.endpoint.EndpointRegistry.class),
                 0L);

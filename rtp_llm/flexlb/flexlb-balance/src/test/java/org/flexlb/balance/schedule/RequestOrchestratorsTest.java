@@ -134,7 +134,7 @@ class RequestOrchestratorsTest {
                         registry,
                         reporter,
                         admissionReporter,
-                        org.mockito.Mockito.mock(EngineCancellation.class),
+                        org.mockito.Mockito.mock(EngineRequestCanceller.class),
                         configuration(),
                         org.mockito.Mockito.mock(EngineGrpcClient.class))
                 .report();
@@ -171,7 +171,7 @@ class RequestOrchestratorsTest {
                         registry,
                         reporter,
                         admissionReporter,
-                        org.mockito.Mockito.mock(EngineCancellation.class),
+                        org.mockito.Mockito.mock(EngineRequestCanceller.class),
                         configuration(),
                         org.mockito.Mockito.mock(EngineGrpcClient.class))
                 .report();
@@ -326,7 +326,7 @@ class RequestOrchestratorsTest {
                 endpoints,
                 mock(DeliveryMetricsReporter.class),
                 mock(RequestSchedulerReporter.class),
-                org.mockito.Mockito.mock(EngineCancellation.class),
+                org.mockito.Mockito.mock(EngineRequestCanceller.class),
                 configuration(),
                 org.mockito.Mockito.mock(EngineGrpcClient.class));
     }

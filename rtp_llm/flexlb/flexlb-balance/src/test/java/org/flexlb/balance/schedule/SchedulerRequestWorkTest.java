@@ -252,7 +252,7 @@ class SchedulerRequestWorkTest {
                 org.mockito.Mockito.mock(EndpointRegistry.class),
                 org.mockito.Mockito.mock(org.flexlb.balance.metrics.DeliveryMetricsReporter.class),
                 org.mockito.Mockito.mock(org.flexlb.balance.metrics.RequestSchedulerReporter.class),
-                org.mockito.Mockito.mock(EngineCancellation.class),
+                org.mockito.Mockito.mock(EngineRequestCanceller.class),
                 service,
                 org.mockito.Mockito.mock(EngineGrpcClient.class));
     }

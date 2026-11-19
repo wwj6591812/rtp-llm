@@ -227,7 +227,7 @@ class RequestResourceAccountingTest {
             var reportedFailure = new CompletableFuture<Throwable>();
             var replies = new java.util.concurrent.atomic.AtomicInteger();
             var stopped =
-                    f.runtime.dispatcher.stop(
+                    f.runtime.dispatcher.cancelRequest(
                             f.item,
                             (route, reply) -> {
                                 assertSame(f.item, route);

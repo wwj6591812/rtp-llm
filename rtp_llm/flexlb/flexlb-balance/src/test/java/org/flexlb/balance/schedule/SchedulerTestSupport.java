@@ -191,11 +191,11 @@ public final class SchedulerTestSupport {
         return SchedulerTestServices.forOwner(owner);
     }
 
-    public static EngineCancellation dispatcher() {
-        return spy(new EngineCancellation(mock(EngineGrpcClient.class)));
+    public static EngineRequestCanceller dispatcher() {
+        return spy(new EngineRequestCanceller(mock(EngineGrpcClient.class)));
     }
 
-    public static EngineCancellation dispatcher(SchedulerTestServices runtime) {
+    public static EngineRequestCanceller dispatcher(SchedulerTestServices runtime) {
         return runtime.dispatcher;
     }
 

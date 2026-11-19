@@ -20,7 +20,7 @@ class SchedulingLifecycleTest {
         var requests = org.mockito.Mockito.mock(RequestRepository.class);
         var tasks = org.mockito.Mockito.mock(java.util.concurrent.ExecutorService.class);
         var timer = org.mockito.Mockito.mock(ExpirationTimer.class);
-        var dispatcher = org.mockito.Mockito.mock(EngineCancellation.class);
+        var dispatcher = org.mockito.Mockito.mock(EngineRequestCanceller.class);
         var responses = org.mockito.Mockito.mock(ResponseCompletionExecutor.class);
         var endpoints = org.mockito.Mockito.mock(org.flexlb.worker.endpoint.EndpointRegistry.class);
         var scheduler =

@@ -47,7 +47,7 @@ public final class RequestSchedulerTestRuntime implements AutoCloseable {
 
     public RequestSchedulerTestRuntime(
             ConfigService configService,
-            EngineCancellation deliveryStrategy,
+            EngineRequestCanceller deliveryStrategy,
             DeliveryMetricsReporter deliveryReporter,
             RequestSchedulerReporter requestReporter,
             EngineGrpcClient engineClient) {

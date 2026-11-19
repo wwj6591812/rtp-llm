@@ -1,7 +1,7 @@
 package org.flexlb.worker.status;
 
 import org.flexlb.balance.metrics.DeliveryMetricsReporter;
-import org.flexlb.balance.schedule.EngineCancellation;
+import org.flexlb.balance.schedule.EngineRequestCanceller;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.service.RoleType;
 import org.flexlb.worker.endpoint.CapacityNotifier;
@@ -32,7 +32,7 @@ public final class RunnerTestSupport {
     }
 
     public static EndpointRegistry endpointRegistry(ConfigService configService) {
-        EngineCancellation delivery = Mockito.mock(EngineCancellation.class);
+        EngineRequestCanceller delivery = Mockito.mock(EngineRequestCanceller.class);
         var config = configService.loadBalanceConfig();
         return new EndpointRegistry(
                 configService,

@@ -43,7 +43,7 @@ public class DirectRequestScheduler extends AbstractRequestScheduler {
             RequestRepository requests,
             ExecutorService requestWork,
             ExpirationTimer deadlines,
-            EngineCancellation engineCancellation,
+            EngineRequestCanceller engineRequestCanceller,
             ResponseCompletionExecutor responseCompletions,
             DeliveryMetricsReporter deliveryReporter,
             TheoryCacheHitReporter cacheTrace) {
@@ -51,7 +51,7 @@ public class DirectRequestScheduler extends AbstractRequestScheduler {
                 requests,
                 requestWork,
                 deadlines,
-                engineCancellation,
+                engineRequestCanceller,
                 responseCompletions,
                 deliveryReporter,
                 cacheTrace);

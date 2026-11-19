@@ -20,8 +20,8 @@ public final class DeliveryTestSupport {
         return org.springframework.test.util.ReflectionTestUtils.getField(target, name);
     }
 
-    public static EngineCancellation route(DeliveryMetricsReporter reporter) {
-        return new EngineCancellation(Mockito.mock(EngineGrpcClient.class));
+    public static EngineRequestCanceller route(DeliveryMetricsReporter reporter) {
+        return new EngineRequestCanceller(Mockito.mock(EngineGrpcClient.class));
     }
 
     public static ConfigService service(FlexlbConfig config) {
@@ -30,7 +30,7 @@ public final class DeliveryTestSupport {
         return service;
     }
 
-    static EngineCancellation cancellations(EngineCancellation cancellation) {
+    static EngineRequestCanceller cancellations(EngineRequestCanceller cancellation) {
         return cancellation;
     }
 }

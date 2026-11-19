@@ -49,7 +49,7 @@ class VitRequestRoutingTest {
         try (var runtime =
                 new RequestSchedulerTestRuntime(
                         service,
-                        new org.flexlb.balance.schedule.EngineCancellation(engine),
+                        new org.flexlb.balance.schedule.EngineRequestCanceller(engine),
                         batches,
                         reports,
                         engine)) {

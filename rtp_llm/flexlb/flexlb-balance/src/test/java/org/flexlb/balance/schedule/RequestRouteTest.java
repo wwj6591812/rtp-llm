@@ -171,7 +171,7 @@ class RequestRouteTest {
                                 org.flexlb.worker.endpoint.EndpointTestSupport.realPrefill(
                                         status,
                                         SchedulingTestConfig.newConfig(),
-                                        mock(EngineCancellation.class),
+                                        mock(EngineRequestCanceller.class),
                                         new RequestRepository(),
                                         mock(DeliveryMetricsReporter.class));
                         case DECODE ->
@@ -287,7 +287,7 @@ class RequestRouteTest {
         return org.flexlb.worker.endpoint.EndpointTestSupport.realPrefill(
                 status,
                 SchedulingTestConfig.newConfig(),
-                mock(EngineCancellation.class),
+                mock(EngineRequestCanceller.class),
                 new RequestRepository(),
                 mock(DeliveryMetricsReporter.class));
     }

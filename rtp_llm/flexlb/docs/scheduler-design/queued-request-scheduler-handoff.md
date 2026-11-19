@@ -63,7 +63,7 @@ Endpoint 契约覆盖；其已提交请求不能直接套用独立 Decode 的取
 保留 RequestPreemption 执行接口的原因：当前 Spring 存在实际替换入口；只保留这一处执行扩展，
 不再建立抽象基类或每角色执行接口。删除计划策略接口是本次明确的扩展契约调整，迁移说明需列出。
 
-WorkerRequestEvent、EngineCancellation 和请求清理队列服务于请求执行事实、远端取消及清理，
+WorkerRequestEvent、EngineRequestCanceller 和请求清理队列服务于请求执行事实、远端取消及清理，
 不是容量唤醒机制，不能按 notify 关键词删除。保留这些责任不表示其所有包装都无需审核。
 
 ## 3. 最少状态及唯一来源

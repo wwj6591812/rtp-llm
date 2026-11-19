@@ -7,7 +7,7 @@ import org.flexlb.balance.request.Request;
 import org.flexlb.balance.requestlog.TheoryCacheHitReporter;
 import org.flexlb.balance.schedule.AbstractRequestScheduler;
 import org.flexlb.balance.schedule.CancelReason;
-import org.flexlb.balance.schedule.EngineCancellation;
+import org.flexlb.balance.schedule.EngineRequestCanceller;
 import org.flexlb.balance.schedule.ExpirationTimer;
 import org.flexlb.balance.schedule.RequestContext;
 import org.flexlb.balance.schedule.RequestRepository;
@@ -220,7 +220,7 @@ class ExternalRequestSchedulerTest {
         final PrefillEndpoint endpoint;
         final DecodeEndpoint decode;
         final AbstractRequestScheduler scheduler;
-        final EngineCancellation dispatcher;
+        final EngineRequestCanceller dispatcher;
 
         final EndpointRegistry endpoints = mock(EndpointRegistry.class);
 
@@ -247,7 +247,7 @@ class ExternalRequestSchedulerTest {
                                     CompletableFuture.completedFuture(
                                             EngineGrpcClient.CancelReply.REQUEST_CLEANED));
 
-            dispatcher = new EngineCancellation(client);
+            dispatcher = new EngineRequestCanceller(client);
             responses = assembly.responseCompletions(service);
             scheduler =
                     batch

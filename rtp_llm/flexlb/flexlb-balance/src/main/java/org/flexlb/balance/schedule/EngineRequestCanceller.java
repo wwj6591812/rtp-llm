@@ -18,7 +18,7 @@ import java.util.function.Consumer;
  * Reply callbacks retain the exact published route and are drained during shutdown, including late replies.
  */
 @org.springframework.stereotype.Component
-public final class EngineCancellation {
+public final class EngineRequestCanceller {
     static final long CLEANUP_TIMEOUT_MS = 5_000L;
     private static final int MAX_ATTEMPTS = 8;
 
@@ -34,7 +34,7 @@ public final class EngineCancellation {
     private final java.util.Set<StopTask> activeStops =
             java.util.concurrent.ConcurrentHashMap.newKeySet();
 
-    public EngineCancellation(EngineGrpcClient grpcClient) {
+    public EngineRequestCanceller(EngineGrpcClient grpcClient) {
         this.grpcClient = grpcClient;
     }
 
@@ -87,7 +87,7 @@ public final class EngineCancellation {
      * Cancels the committed route with bounded retries using the first submission's callbacks.
      * Completion ends the cancellation attempts; the caller separately tracks resource cleanup.
      */
-    CompletableFuture<Void> stop(
+    CompletableFuture<Void> cancelRequest(
             RequestRoute claim,
             BiConsumer<RequestRoute, EngineGrpcClient.CancelReply> replyHandler,
             Consumer<Throwable> failureHandler) {

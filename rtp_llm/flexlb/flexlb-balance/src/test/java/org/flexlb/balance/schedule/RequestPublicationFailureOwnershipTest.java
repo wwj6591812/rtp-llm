@@ -75,7 +75,7 @@ class RequestPublicationFailureOwnershipTest {
                     null);
             context.recordCleanupProgress(route, false, true, true, System.currentTimeMillis());
             var original = f.runtime.dispatcher;
-            var cancellations = mock(EngineCancellation.class);
+            var cancellations = mock(EngineRequestCanceller.class);
             SchedulerTestServices.setDependency(f.runtime, "dispatcher", cancellations);
             try {
                 WorkerEventTestSupport.publish(

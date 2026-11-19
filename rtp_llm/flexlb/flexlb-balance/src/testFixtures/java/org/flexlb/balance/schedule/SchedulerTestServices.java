@@ -46,7 +46,7 @@ public final class SchedulerTestServices {
     private final EndpointRegistry endpoints;
     final DeliveryMetricsReporter deliveryReporter;
     final RequestSchedulerReporter requestReporter;
-    public final EngineCancellation dispatcher;
+    public final EngineRequestCanceller dispatcher;
     private final LongSupplier clock;
     final EngineGrpcClient engineClient;
     private final java.util.concurrent.ScheduledThreadPoolExecutor cleanupTimerExecutor =
@@ -71,7 +71,7 @@ public final class SchedulerTestServices {
             EndpointRegistry endpoints,
             DeliveryMetricsReporter deliveryReporter,
             RequestSchedulerReporter requestReporter,
-            EngineCancellation dispatcher,
+            EngineRequestCanceller dispatcher,
             ConfigService config,
             EngineGrpcClient engineClient) {
         this(
@@ -90,7 +90,7 @@ public final class SchedulerTestServices {
             EndpointRegistry endpoints,
             DeliveryMetricsReporter deliveryReporter,
             RequestSchedulerReporter requestReporter,
-            EngineCancellation dispatcher,
+            EngineRequestCanceller dispatcher,
             ConfigService config,
             EngineGrpcClient engineClient,
             LongSupplier clock) {
@@ -239,7 +239,7 @@ public final class SchedulerTestServices {
                 switch (name) {
                     case "timer" -> "expirationTimer";
                     case "tasks" -> "requestWork";
-                    case "dispatcher" -> "engineCancellation";
+                    case "dispatcher" -> "engineRequestCanceller";
                     default -> name;
                 };
         if (!java.util.Set.of("tasks", "dispatcher", "responseCompletions", "timer").contains(name))
@@ -274,7 +274,7 @@ public final class SchedulerTestServices {
                         AbstractRequestScheduler.class.getDeclaredField(
                                 name.equals("tasks")
                                         ? "requestWork"
-                                        : name.equals("dispatcher") ? "engineCancellation" : name);
+                                        : name.equals("dispatcher") ? "engineRequestCanceller" : name);
                 target.setAccessible(true);
                 target.set(owner, source.get(runtime));
             } catch (ReflectiveOperationException e) {
@@ -387,7 +387,7 @@ public final class SchedulerTestServices {
             RequestRepository requests,
             java.util.concurrent.ExecutorService tasks,
             ExpirationTimer timer,
-            EngineCancellation dispatcher,
+            EngineRequestCanceller dispatcher,
             ResponseCompletionExecutor responses,
             EndpointRegistry endpoints,
             long deadlineNanos) {
@@ -468,7 +468,7 @@ public final class SchedulerTestServices {
                 dependencies.repository,
                 dependencies.requestWork,
                 dependency(dependencies, "expirationTimer"),
-                dependency(dependencies, "engineCancellation"),
+                dependency(dependencies, "engineRequestCanceller"),
                 dependency(dependencies, "responseCompletions"),
                 forOwner(dependencies).deliveryReporter,
                 dependency(dependencies, "cacheTrace"),
@@ -506,7 +506,7 @@ public final class SchedulerTestServices {
                 dependencies.repository,
                 dependencies.requestWork,
                 dependency(dependencies, "expirationTimer"),
-                dependency(dependencies, "engineCancellation"),
+                dependency(dependencies, "engineRequestCanceller"),
                 dependency(dependencies, "responseCompletions"),
                 forOwner(dependencies).deliveryReporter,
                 dependency(dependencies, "cacheTrace"));
@@ -519,7 +519,7 @@ public final class SchedulerTestServices {
             d.repository,
             d.requestWork,
             dependency(d, "expirationTimer"),
-            dependency(d, "engineCancellation"),
+            dependency(d, "engineRequestCanceller"),
             dependency(d, "responseCompletions"),
             forOwner(d).deliveryReporter,
             dependency(d, "cacheTrace")
@@ -540,7 +540,7 @@ public final class SchedulerTestServices {
             d.repository,
             d.requestWork,
             dependency(d, "expirationTimer"),
-            dependency(d, "engineCancellation"),
+            dependency(d, "engineRequestCanceller"),
             dependency(d, "responseCompletions"),
             forOwner(d).deliveryReporter,
             dependency(d, "cacheTrace"),
@@ -700,7 +700,7 @@ public final class SchedulerTestServices {
                 RequestRepository requests,
                 java.util.concurrent.ExecutorService tasks,
                 ExpirationTimer deadlines,
-                EngineCancellation dispatcher,
+                EngineRequestCanceller dispatcher,
                 ResponseCompletionExecutor responses,
                 DeliveryMetricsReporter reporter,
                 org.flexlb.balance.requestlog.TheoryCacheHitReporter trace) {

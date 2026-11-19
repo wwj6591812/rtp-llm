@@ -4,7 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.flexlb.api.metrics.ApiMetricsReporter;
 import org.flexlb.api.server.FlexlbGrpcServer;
 import org.flexlb.balance.schedule.AbstractRequestScheduler;
-import org.flexlb.balance.schedule.EngineCancellation;
+import org.flexlb.balance.schedule.EngineRequestCanceller;
 import org.flexlb.balance.schedule.ExpirationTimer;
 import org.flexlb.balance.schedule.RequestRepository;
 import org.flexlb.balance.schedule.ResponseCompletionExecutor;
@@ -41,7 +41,7 @@ public class ApplicationLifecycle implements ApplicationContextAware {
     private final RequestRepository requests;
     private final ExecutorService requestWork;
     private final ExpirationTimer deadlines;
-    private final EngineCancellation engineCancellation;
+    private final EngineRequestCanceller engineRequestCanceller;
     private final ResponseCompletionExecutor responses;
     private final EndpointRegistry endpoints;
     private final MasterStatusService consistency;
@@ -68,7 +68,7 @@ public class ApplicationLifecycle implements ApplicationContextAware {
             RequestRepository requests,
             @Qualifier("requestWorkExecutor") ExecutorService requestWork,
             ExpirationTimer deadlines,
-            EngineCancellation engineCancellation,
+            EngineRequestCanceller engineRequestCanceller,
             ResponseCompletionExecutor responses,
             EndpointRegistry endpoints) {
         this(
@@ -81,7 +81,7 @@ public class ApplicationLifecycle implements ApplicationContextAware {
                 requests,
                 requestWork,
                 deadlines,
-                engineCancellation,
+                engineRequestCanceller,
                 responses,
                 endpoints,
                 DEFAULT_WARM_UP_WAIT_MS);
@@ -97,7 +97,7 @@ public class ApplicationLifecycle implements ApplicationContextAware {
             RequestRepository requests,
             ExecutorService requestWork,
             ExpirationTimer deadlines,
-            EngineCancellation engineCancellation,
+            EngineRequestCanceller engineRequestCanceller,
             ResponseCompletionExecutor responses,
             EndpointRegistry endpoints,
             long warmUpWaitMs) {
@@ -105,7 +105,7 @@ public class ApplicationLifecycle implements ApplicationContextAware {
         this.requests = requests;
         this.requestWork = requestWork;
         this.deadlines = deadlines;
-        this.engineCancellation = engineCancellation;
+        this.engineRequestCanceller = engineRequestCanceller;
         this.responses = responses;
         this.endpoints = endpoints;
 
@@ -218,15 +218,15 @@ public class ApplicationLifecycle implements ApplicationContextAware {
         Throwable failure = Failures.run(null, () -> requests.awaitResponses(deadlineNanos));
         requests.closeRegistration();
         failure = Failures.run(failure, scheduling::stopAndCancelRequests);
-        failure = Failures.run(failure, engineCancellation::awaitStops);
+        failure = Failures.run(failure, engineRequestCanceller::awaitStops);
         failure = Failures.run(failure, scheduling::awaitRequestWork);
         failure = Failures.run(failure, endpoints::close);
-        failure = Failures.run(failure, engineCancellation::awaitStops);
+        failure = Failures.run(failure, engineRequestCanceller::awaitStops);
         failure = Failures.run(failure, deadlines::close);
         failure = Failures.run(failure, scheduling::awaitRequestWork);
         failure = Failures.run(failure, scheduling::finishRequestCleanup);
         failure = Failures.run(failure, scheduling::awaitRequestWork);
-        failure = Failures.run(failure, engineCancellation::awaitStops);
+        failure = Failures.run(failure, engineRequestCanceller::awaitStops);
         failure = Failures.run(failure, requestWork::close);
         failure = Failures.run(failure, responses::close);
         failure = Failures.run(failure, scheduling::throwIfRequestFailed);

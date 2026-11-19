@@ -248,14 +248,14 @@ class EncoderSchedulingIntegrationTest {
         worker("encoder", 8001, true, "group", Map.of(), 0, 0);
         var context = context("encoder-cancel", 100, 0L);
         assertTrue(lifecycle.submit(context).get(2, TimeUnit.SECONDS).isSuccess());
-        var cancellations = mock(EngineCancellation.class);
+        var cancellations = mock(EngineRequestCanceller.class);
         org.springframework.test.util.ReflectionTestUtils.setField(
-                lifecycle, "engineCancellation", cancellations);
+                lifecycle, "engineRequestCanceller", cancellations);
         lifecycle.cancel(context, CancelReason.CLIENT_CANCELLED);
         RequestProtocolTestSupport.awaitCondition(
                 () -> context.snapshot().phase() == RequestContext.Phase.CLOSED);
         org.mockito.Mockito.verify(cancellations, org.mockito.Mockito.never())
-                .stop(any(), any(), any());
+                .cancelRequest(any(), any(), any());
     }
 
     @Test

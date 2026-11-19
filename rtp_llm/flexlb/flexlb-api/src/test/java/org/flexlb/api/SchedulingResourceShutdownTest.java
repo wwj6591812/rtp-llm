@@ -1,7 +1,7 @@
 package org.flexlb.api;
 
 import org.flexlb.balance.schedule.AbstractRequestScheduler;
-import org.flexlb.balance.schedule.EngineCancellation;
+import org.flexlb.balance.schedule.EngineRequestCanceller;
 import org.flexlb.balance.schedule.ExpirationTimer;
 import org.flexlb.balance.schedule.RequestRepository;
 import org.flexlb.balance.schedule.ResponseCompletionExecutor;
@@ -139,7 +139,7 @@ class SchedulingResourceShutdownTest {
         final java.util.concurrent.ExecutorService tasks;
         final ExpirationTimer deadlines = mock(ExpirationTimer.class);
         final ResponseCompletionExecutor completions = mock(ResponseCompletionExecutor.class);
-        final EngineCancellation dispatcher = mock(EngineCancellation.class);
+        final EngineRequestCanceller dispatcher = mock(EngineRequestCanceller.class);
         final ApplicationLifecycle lifecycle;
 
         Fixture(java.util.concurrent.ExecutorService tasks) {

@@ -43,7 +43,7 @@ public abstract class AbstractRequestScheduler implements RequestScheduler {
     protected final RequestRepository repository;
     protected final ExecutorService requestWork;
     private final ExpirationTimer expirationTimer;
-    private final EngineCancellation engineCancellation;
+    private final EngineRequestCanceller engineRequestCanceller;
     private final ResponseCompletionExecutor responseCompletions;
     private final TheoryCacheHitReporter cacheTrace;
     private final Object requestWorkLock = new Object();
@@ -57,7 +57,7 @@ public abstract class AbstractRequestScheduler implements RequestScheduler {
             RequestRepository repository,
             ExecutorService requestWork,
             ExpirationTimer deadlines,
-            EngineCancellation engineCancellation,
+            EngineRequestCanceller engineRequestCanceller,
             ResponseCompletionExecutor responseCompletions,
             DeliveryMetricsReporter deliveryReporter,
             TheoryCacheHitReporter cacheTrace) {
@@ -65,7 +65,7 @@ public abstract class AbstractRequestScheduler implements RequestScheduler {
         this.requestWork = Objects.requireNonNull(requestWork);
         this.expirationTimer = Objects.requireNonNull(deadlines);
 
-        this.engineCancellation = Objects.requireNonNull(engineCancellation);
+        this.engineRequestCanceller = Objects.requireNonNull(engineRequestCanceller);
         this.responseCompletions = Objects.requireNonNull(responseCompletions);
         this.cacheTrace = Objects.requireNonNull(cacheTrace);
     }
@@ -76,7 +76,8 @@ public abstract class AbstractRequestScheduler implements RequestScheduler {
         try {
             if (handleWorkerEvent(route, event)) {
                 try {
-                    if (ctx.snapshot().phase() == Phase.CLOSED) engineCancellation.forget(route);
+                    if (ctx.snapshot().phase() == Phase.CLOSED)
+                        engineRequestCanceller.forget(route);
                 } finally {
                     processPendingRequestActions(ctx);
                 }
@@ -334,7 +335,7 @@ public abstract class AbstractRequestScheduler implements RequestScheduler {
     public void checkShutdownThread() {
         checkState(
                 !isExecutingRequestWork()
-                        && !engineCancellation.isStoppingOnCurrentThread()
+                        && !engineRequestCanceller.isStoppingOnCurrentThread()
                         && !responseCompletions.isCompletingOnCurrentThread(),
                 "scheduler shutdown cannot wait for its own request work or response callback");
     }
@@ -763,7 +764,8 @@ public abstract class AbstractRequestScheduler implements RequestScheduler {
                     reply == EngineGrpcClient.CancelReply.REQUEST_CLEANED,
                     System.currentTimeMillis())) {
                 try {
-                    if (ctx.snapshot().phase() == Phase.CLOSED) engineCancellation.forget(route);
+                    if (ctx.snapshot().phase() == Phase.CLOSED)
+                        engineRequestCanceller.forget(route);
                 } finally {
                     processPendingRequestActions(ctx);
                 }
@@ -966,7 +968,7 @@ public abstract class AbstractRequestScheduler implements RequestScheduler {
         }
         var after = ctx.snapshot();
         if (delivery != null && after.prefillCleanupCompleted() && after.decodeCleanupCompleted()) {
-            failure = Failures.run(failure, () -> engineCancellation.forget(delivery));
+            failure = Failures.run(failure, () -> engineRequestCanceller.forget(delivery));
         }
         if (after.requestRecordForArchive() != null) {
             var terminal = after.requestRecordForArchive();
@@ -987,7 +989,7 @@ public abstract class AbstractRequestScheduler implements RequestScheduler {
                     Failures.run(
                             null,
                             () ->
-                                    engineCancellation.stop(
+                                    engineRequestCanceller.cancelRequest(
                                             delivery,
                                             this::onEngineCancelReply,
                                             this::recordRequestFailure));
