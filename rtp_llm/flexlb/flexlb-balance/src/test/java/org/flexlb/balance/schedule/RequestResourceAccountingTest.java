@@ -25,6 +25,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -75,18 +77,30 @@ class RequestResourceAccountingTest {
                                                         .NO_PREFILL_WORKER));
                             });
             try {
-                for (int i = 0; i <= slots; i++) {
+                for (int i = 0; i < slots; i++) {
                     f.requests.submit(
                             RequestProtocolTestSupport.context(f.item.ctx().getConfig(), 9900L + i),
                             () -> {});
                 }
                 assertTrue(started.await(5, TimeUnit.SECONDS));
+
+                var waiting = RequestProtocolTestSupport.context(f.item.ctx().getConfig(), 9990L);
+                var cancelled = RequestProtocolTestSupport.context(f.item.ctx().getConfig(), 9991L);
+                f.requests.submit(waiting, () -> {});
+                var cancelledResponse = f.requests.submit(cancelled, () -> {});
+                f.requests.cancel(cancelled, CancelReason.CLIENT_CANCELLED);
+                assertFalse(cancelledResponse.get(5, TimeUnit.SECONDS).isSuccess());
+
                 var token = f.item.ctx().snapshot().deadlines().inactivity();
                 assertNotNull(token);
                 f.requests.onDeadline(token, System.currentTimeMillis() + TTL + 1000);
                 assertTrue(
                         f.cancelSent.await(5, TimeUnit.SECONDS),
                         "Engine cancellation must start while all DIRECT selections are blocked");
+                var pending = (Collection<?>) DeliveryTestSupport.getField(f.requests, "pending");
+                synchronized (pending) {
+                    assertEquals(List.of(waiting), List.copyOf(pending));
+                }
                 assertEquals(slots, threads.size());
                 assertTrue(threads.stream().allMatch(Thread::isVirtual));
             } finally {

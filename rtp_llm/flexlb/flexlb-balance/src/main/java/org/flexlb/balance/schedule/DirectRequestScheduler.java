@@ -9,6 +9,7 @@ import org.flexlb.util.Logger;
 import org.flexlb.worker.endpoint.CapacityKey;
 import org.flexlb.worker.endpoint.StrategyErrorType;
 
+import java.util.LinkedHashSet;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -26,8 +27,8 @@ public class DirectRequestScheduler extends AbstractRequestScheduler {
             Executors.newThreadPerTaskExecutor(
                     Thread.ofVirtual().name("flexlb-direct-", 1).factory());
     private final ThreadLocal<Boolean> selecting = new ThreadLocal<>();
-    private final java.util.concurrent.ConcurrentLinkedQueue<RequestContext> pending =
-            new java.util.concurrent.ConcurrentLinkedQueue<>();
+    // The set keeps FIFO order and lets cleanup remove a request directly by its context.
+    private final LinkedHashSet<RequestContext> pending = new LinkedHashSet<>();
     private final java.util.concurrent.atomic.AtomicInteger acceptedWork =
             new java.util.concurrent.atomic.AtomicInteger();
 
@@ -74,8 +75,10 @@ public class DirectRequestScheduler extends AbstractRequestScheduler {
 
     @Override
     public void stop() {
-        stopped = true;
-        pending.clear();
+        synchronized (pending) {
+            stopped = true;
+            pending.clear();
+        }
     }
 
     @Override
@@ -84,7 +87,7 @@ public class DirectRequestScheduler extends AbstractRequestScheduler {
                 || acceptedWork.get() != 0 && isExecutingRequestWork()) return false;
         while (scheduling.get()
                 || acceptedWork.get() != 0
-                || started && !stopped && !pending.isEmpty()) {
+                || started && !stopped && hasPendingRequests()) {
             if (deadlineNanos != Long.MAX_VALUE && System.nanoTime() >= deadlineNanos) return false;
             java.util.concurrent.locks.LockSupport.parkNanos(100_000L);
         }
@@ -94,13 +97,16 @@ public class DirectRequestScheduler extends AbstractRequestScheduler {
     @Override
     public void scheduleRequest(RequestContext context) {
         if (!checkRequestMode(context, false)) return;
-        if (stopped) {
-            cancel(context, CancelReason.SHUTDOWN);
-            return;
+        boolean accepting;
+        synchronized (pending) {
+            accepting = !stopped;
+            if (accepting) pending.add(context);
         }
-        pending.add(context);
-        if (stopped) pending.remove(context);
-        else if (started) drainPendingRequests();
+        if (!accepting) {
+            cancel(context, CancelReason.SHUTDOWN);
+        } else if (started) {
+            drainPendingRequests();
+        }
     }
 
     public SelectionResult<RequestRoute, CapacityKey> selectAndPublish(
@@ -121,7 +127,9 @@ public class DirectRequestScheduler extends AbstractRequestScheduler {
 
     @Override
     protected void removeRequest(RequestContext request) {
-        pending.remove(request);
+        synchronized (pending) {
+            pending.remove(request);
+        }
     }
 
     @Override
@@ -145,13 +153,19 @@ public class DirectRequestScheduler extends AbstractRequestScheduler {
                 RequestContext request;
                 while (!stopped
                         && acceptedWork.get() < MAX_SELECTIONS
-                        && (request = pending.poll()) != null) {
+                        && (request = pollPendingRequest()) != null) {
                     submitSelection(request);
                 }
             } finally {
                 scheduling.set(false);
             }
-        } while (started && acceptedWork.get() < MAX_SELECTIONS && !pending.isEmpty());
+        } while (started && acceptedWork.get() < MAX_SELECTIONS && hasPendingRequests());
+    }
+
+    private RequestContext pollPendingRequest() {
+        synchronized (pending) {
+            return pending.isEmpty() ? null : pending.removeFirst();
+        }
     }
 
     private void submitSelection(RequestContext request) {
@@ -230,6 +244,12 @@ public class DirectRequestScheduler extends AbstractRequestScheduler {
             var result = selectAndPublish(context, () -> router.selectAndRegister(context, group));
             if (result.status() == SelectionResult.Status.RETRY && attempt == 0) continue;
             return result;
+        }
+    }
+
+    private boolean hasPendingRequests() {
+        synchronized (pending) {
+            return !pending.isEmpty();
         }
     }
 }
