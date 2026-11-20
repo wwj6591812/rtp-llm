@@ -586,6 +586,10 @@ class SparseMlaPageRRImpl(SparseMlaImpl):
     def can_capture_cuda_graph_prepare(self):
         return not self.page_rr_params.is_prefill
 
+    def prepare_cuda_graph(self, inputs):
+        # Page-RR owns the graph-stable Decode metadata and its update kernels.
+        self.prepare(inputs, forbid_realloc=True)
+
     def prepare(self, inputs, forbid_realloc=False):
         self.page_rr_params.prepare(inputs, forbid_realloc=forbid_realloc)
         # Reserve the small Decode SFA arena before freezing the Graph

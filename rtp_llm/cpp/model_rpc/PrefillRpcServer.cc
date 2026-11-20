@@ -322,10 +322,13 @@ void PrefillRpcServer::setContextError(PrefillGenerateContext& prefill_context,
 void PrefillRpcServer::prepareGenerateInput(PrefillGenerateContext& prefill_context) {
     if (!prefill_context.generate_input) {
         RTP_LLM_CHECK_WITH_INFO(engine_ != nullptr, "prefill rpc server engine is not initialized");
-        auto input                                   = QueryConverter::transQuery(prefill_context.rpc_context.request);
-        input->generate_config->pd_separation        = true;
-        input->generate_config->force_disable_sp_run = !engine_->isMTPEagle();
-        prefill_context.generate_input               = std::move(input);
+        auto  input          = QueryConverter::transQuery(prefill_context.rpc_context.request);
+        auto& config         = *input->generate_config;
+        config.pd_separation = !config.isPrefillOnly();
+        if (config.pd_separation) {
+            config.force_disable_sp_run = !engine_->isMTPEagle();
+        }
+        prefill_context.generate_input = std::move(input);
     }
     prefill_context.request_info = prefill_context.generate_input->request_info;
 }
@@ -336,6 +339,9 @@ void PrefillRpcServer::getRpcConnection(PrefillGenerateContext& prefill_context)
     prefill_context.trace_server_port = 0;
     RTP_LLM_LOG_DEBUG("request [%ld] trans query", prefill_context.request_id);
     prepareGenerateInput(prefill_context);
+    if (prefill_context.generate_input->generate_config->isPrefillOnly()) {
+        return;
+    }
 
     RTP_LLM_LOG_DEBUG("request [%ld] get rpc connection", prefill_context.request_id);
 
@@ -513,6 +519,9 @@ void PrefillRpcServer::fillStagePeerGroups(GenerateRequestPB& alloc_request, con
 
 void PrefillRpcServer::remoteAllocateResource(PrefillGenerateContext& prefill_context) {
     RTP_LLM_PROFILE_FUNCTION();
+    if (prefill_context.generate_input && prefill_context.generate_input->generate_config->isPrefillOnly()) {
+        return;
+    }
     RTP_LLM_LOG_DEBUG("request [%ld] start to remote allocate resource", prefill_context.request_id);
     if (prefill_context.isRequestCancelled()) {
         setContextError(prefill_context, ErrorInfo(ErrorCode::CANCELLED, "request is cancelled"));
@@ -604,9 +613,13 @@ void PrefillRpcServer::enqueueRequest(PrefillGenerateContext& prefill_context) {
 
 void PrefillRpcServer::remoteLoadCacheStart(PrefillGenerateContext& prefill_context) {
     RTP_LLM_PROFILE_FUNCTION();
+    const auto& stream = prefill_context.getStream();
+    if (stream->generateConfig()->isPrefillOnly()) {
+        return;
+    }
     RTP_LLM_LOG_DEBUG("request [%ld] remote load cache", prefill_context.request_id);
     auto start_time_us = currentTimeUs();
-    auto wait_result   = waitStreamBeforeRun(prefill_context.getStream());
+    auto wait_result   = waitStreamBeforeRun(stream);
     prefill_context.stat_info.remote_load_cache_wait_stream_rt_us += currentTimeUs() - start_time_us;
     if (wait_result.hasError()) {
         setContextError(prefill_context, wait_result);
@@ -660,6 +673,9 @@ void PrefillRpcServer::pollLocalOutput(PrefillGenerateContext& prefill_context) 
         prefill_context.finished = true;
         auto error_info          = stream->statusInfo();
         setContextError(prefill_context, error_info);
+    } else if (stream->generateConfig()->isPrefillOnly()) {
+        prefill_context.dequeueStreamFromRuntimeMeta();
+        prefill_context.finished = true;
     }
 }
 

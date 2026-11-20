@@ -32,7 +32,7 @@ def _uses_rtp_nvfp4(input: torch.Tensor) -> bool:
     )
 
 
-def _quantize_with_scale(input: torch.Tensor, inverse_scale: torch.Tensor):
+def _quantize_with_scale(input: torch.Tensor, inverse_scale: torch.Tensor, **kwargs):
     if _uses_rtp_nvfp4(input):
         from rtp_llm.models_py.triton_kernels.common.nvfp4 import (
             quantize_nvfp4_with_scale,
@@ -41,7 +41,7 @@ def _quantize_with_scale(input: torch.Tensor, inverse_scale: torch.Tensor):
         return quantize_nvfp4_with_scale(input, inverse_scale)
     # Retain the existing backend for CUDA12/other GPU architectures. K3.1's
     # CUDA13 SM100/SM103 path must never fall back to FlashInfer quantization.
-    return flashinfer.fp4_quantize(input, inverse_scale)
+    return flashinfer.fp4_quantize(input, inverse_scale, **kwargs)
 
 
 class CudaFp4GEMMLinear(LinearBase):
@@ -296,8 +296,8 @@ class CudaFp4GEMMLinear(LinearBase):
         input_scale_inv, alpha = self.input_scale_inv, self.alpha
 
         # Quantize BF16 or FP16 input to (FP4 and interleaved block scale)
-        input_fp4, input_scale_interleaved = flashinfer.fp4_quantize(
-            input, self.input_scale_inv, **self._quantize_kwargs
+        input_fp4, input_scale_interleaved = _quantize_with_scale(
+            input, input_scale_inv, **self._quantize_kwargs
         )
         assert input_fp4.dtype == torch.uint8
 

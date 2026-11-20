@@ -12,10 +12,14 @@ from rtp_llm.config.py_config_modules import PyEnvConfigs
 from rtp_llm.model_factory import ModelFactory
 from rtp_llm.models_py.model_desc.kimi_k3 import KimiK3Model
 from rtp_llm.models_py.model_desc.module_base import GptModelBase
+from rtp_llm.models_py.modules.factory.attention.cuda_mla_impl.dsa_page_rr_params import (
+    DsaPageRRParams,
+)
 from rtp_llm.models_py.modules.factory.attention.cuda_mla_impl.flashmla_sparse_impl import (
     SparseMlaImpl,
 )
 from rtp_llm.models_py.modules.factory.attention.cuda_mla_impl.flashmla_sparse_page_rr_impl import (
+    PageRRSparseMlaOp,
     SparseMlaPageRRImpl,
 )
 from rtp_llm.models_py.modules.factory.attention.kda_impl import KdaMetadata, KdaPrefill
@@ -223,6 +227,45 @@ class KimiK3StartupIntegrationTest(unittest.TestCase):
                 workspace_owner=owner,
             )
         self.assertEqual(observed, [8])
+
+    def test_sparse_page_rr_decode_graph_refreshes_metadata(self):
+        lengths = torch.tensor([1, 64], dtype=torch.int32, device="cuda")
+        pages = torch.tensor([[1, 2], [3, 4]], dtype=torch.int32, device="cuda")
+        inputs = AttentionInputView(
+            PyAttentionInputs(),
+            is_prefill=False,
+            is_cuda_graph=True,
+            physical_token_count=2,
+            input_lengths=torch.ones(2, dtype=torch.int32),
+            sequence_lengths_plus_1_device=lengths,
+            kv_cache_kernel_block_id_device=pages,
+        )
+        impl = SparseMlaPageRRImpl.__new__(SparseMlaPageRRImpl)
+        impl.execution_phase = None
+        impl.fmha_impl = PageRRSparseMlaOp.__new__(PageRRSparseMlaOp)
+        impl.page_rr_params = DsaPageRRParams(
+            NS(tokens_per_block=64, kernel_tokens_per_block=64),
+            ParallelismConfig(),
+            max_seq_len=128,
+            is_cuda_graph=True,
+        )
+        with (
+            patch.object(impl.page_rr_params, "prepare_execution"),
+            patch.object(impl.fmha_impl, "plan"),
+        ):
+            impl.create_params(inputs)
+            slots = impl.page_rr_params.slot_mapping
+            self.assertEqual(slots.tolist(), [64, 255])
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph):
+                impl.prepare_cuda_graph(inputs)
+            lengths.copy_(torch.tensor([65, 3], device="cuda", dtype=torch.int32))
+            pages.copy_(
+                torch.tensor([[5, 6], [7, 8]], device="cuda", dtype=torch.int32)
+            )
+            graph.replay()
+            self.assertIs(impl.page_rr_params.slot_mapping, slots)
+            self.assertEqual(slots.tolist(), [384, 450])
 
     def test_real_dsa_constructor_initializes_output_row_owner(self):
         config = NS(

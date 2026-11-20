@@ -654,7 +654,7 @@ class KimiK3Model(KimiK31ModelAdapter, GptModelBase):
             "K3 TP projection collectives: fp8_layers=%d decode_push_rs=%s "
             "max_m=%d fp8_ag_layers=%d",
             len(fp8_rs_layers),
-            decode_staging,
+            decode_staging and collective.push_rs is not None,
             max_m,
             len(fp8_ag_layers),
         )
