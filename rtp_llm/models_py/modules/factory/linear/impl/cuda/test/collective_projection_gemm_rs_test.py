@@ -13,16 +13,21 @@ import torch.distributed._symmetric_memory as symm
 
 
 @contextmanager
-def projection_context(precision, *, world_size=16, decode=False, peers=True):
+def projection_context(
+    precision, *, world_size=16, decode=False, peers=True, enable_ag=False
+):
     communication = types.ModuleType("rtp_llm.models_py.distributed.collective_torch")
     communication.STAGING_MAX_LOCAL_M = 128
     communication.Fp8Activation = type("Fp8Activation", (), {})
     communication.is_same_host_group = Mock(return_value=False)
+    communication._all_ready = lambda ready, group: ready
     communication.create_custom_all_gather = Mock(
         return_value=object() if peers else None
     )
     push = Mock()
-    communication.create_push_reduce_scatter = Mock(return_value=push)
+    communication.create_push_reduce_scatter = Mock(
+        return_value=push if peers else None
+    )
 
     deep_gemm = types.ModuleType("deep_gemm")
     workspace = object()
@@ -61,7 +66,7 @@ def projection_context(precision, *, world_size=16, decode=False, peers=True):
                 torch.device("cpu"),
                 max_m=1024,
                 hidden_size=7168,
-                enable_ag=False,
+                enable_ag=enable_ag,
                 decode_staging=decode,
             )
         else:
@@ -186,6 +191,62 @@ class CollectiveProjectionGemmRSTest(unittest.TestCase):
             reduce_scatter.assert_called_once()
             self.assertIs(reduce_scatter.call_args.args[0], result)
             self.assertIs(reduce_scatter.call_args.args[1], projection.return_value)
+
+    def test_fp8_without_peer_access_keeps_quantized_rank_order(self):
+        for decode in (False, True):
+            with self.subTest(decode=decode):
+                with projection_context(
+                    "fp8", world_size=2, decode=decode, peers=False, enable_ag=True
+                ) as ctx:
+                    collective, projection, _, _, _, tp_group = ctx
+                    projection.K, projection.N = 7168, 2
+                    rows, width = 3, projection.K
+                    hidden = torch.empty((rows, width), dtype=torch.bfloat16)
+                    values = torch.ones((rows, width), dtype=torch.uint8)
+                    wire = torch.full((width // 512, 4), 10, dtype=torch.int32)
+                    projection.quantize_collective_input.return_value = (
+                        values.view(torch.float8_e4m3fn),
+                        wire.T[:rows],
+                    )
+
+                    def gather(output, source, *, group):
+                        self.assertIs(group, tp_group)
+                        output[: source.shape[0]].copy_(source)
+                        output[source.shape[0] :].copy_(source + 1)
+
+                    def project(values, scales, *, out):
+                        out[:, 0] = values.view(torch.uint8)[:, 0]
+                        out[:, 1] = scales[:, 0]
+
+                    projection.forward_quantized.side_effect = project
+                    with patch.object(
+                        torch.distributed, "all_gather_into_tensor", side_effect=gather
+                    ):
+                        result = collective.all_gather_gemm(hidden, projection)
+                    symm.get_symm_mem_workspace.assert_not_called()
+                    expected = torch.tensor(
+                        [[1, 10]] * rows + [[2, 11]] * rows, dtype=torch.bfloat16
+                    )
+                    self.assertTrue(torch.equal(result, expected))
+
+    def test_fp8_without_peer_access_uses_nccl_reduce_scatter(self):
+        for decode in (False, True):
+            with self.subTest(decode=decode):
+                with projection_context("fp8", decode=decode, peers=False) as ctx:
+                    collective, projection, backend, _, _, group = ctx
+                    backend.GemmRSBuffer.assert_not_called()
+                    values = torch.empty((512, projection.K), dtype=torch.float8_e4m3fn)
+                    scales = torch.empty((512, 1), dtype=torch.int32)
+                    partial = torch.empty((512, projection.N), dtype=torch.bfloat16)
+                    projection.forward_quantized.return_value = partial
+                    with patch.object(torch.distributed, "reduce_scatter_tensor") as rs:
+                        result = collective.gemm_reduce_scatter(
+                            values, scales, projection
+                        )
+                    rs.assert_called_once()
+                    self.assertIs(rs.call_args.args[0], result)
+                    self.assertIs(rs.call_args.args[1], partial)
+                    self.assertIs(rs.call_args.kwargs["group"], group)
 
 
 if __name__ == "__main__":

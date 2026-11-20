@@ -7,6 +7,7 @@ import torch.distributed as dist
 
 from rtp_llm.models_py.distributed.collective_torch import (
     Fp8Activation,
+    _all_ready,
     create_custom_all_gather,
     create_push_reduce_scatter,
 )
@@ -24,8 +25,6 @@ class Fp8CollectiveProjection:
         enable_rs: bool = True,
         decode_staging: bool = False,
     ):
-        import torch.distributed._symmetric_memory as symm
-
         self.group = group
         self.device = torch.device(device)
         self.world_size = dist.get_world_size(group)
@@ -34,74 +33,61 @@ class Fp8CollectiveProjection:
         self.enable_ag = enable_ag
         self.enable_rs = enable_rs
         self.decode_staging = decode_staging
-        if self.world_size < 2 or self.max_m % self.world_size:
+        if self.world_size < 2 or self.max_m <= 0 or self.max_m % self.world_size:
             raise ValueError("FP8 collective capacity must be divisible by TP size")
         if self.hidden_size % 512:
             raise ValueError("FP8 collective hidden size must be 512-aligned")
-        if (
-            enable_ag
-            and not decode_staging
-            and not callable(
-                getattr(symm, "_pipelined_multi_all_gather_and_consume", None)
-            )
-        ):
-            raise RuntimeError("PyTorch FP8 AllGather consumer pipeline unavailable")
         self.custom_ag = None
+        self.pipelined_ag = None
         if enable_ag:
-            if decode_staging:
-                self.custom_ag = create_custom_all_gather(
-                    group,
-                    self.device,
-                    max_m=self.max_m,
-                    k=self.hidden_size,
-                    fp8=True,
+            self.custom_ag = create_custom_all_gather(
+                group,
+                self.device,
+                max_m=(
+                    self.max_m
+                    if decode_staging
+                    else min(self.max_m, 4095 * self.world_size)
+                ),
+                k=self.hidden_size,
+                fp8=True,
+                staging_only=decode_staging,
+            )
+            # The factory has agreed on peer access and successful mappings
+            # before we enter another symmetric-memory rendezvous.
+            if self.custom_ag is not None and not decode_staging:
+                import torch.distributed._symmetric_memory as symm
+
+                pipeline = getattr(
+                    symm, "_pipelined_multi_all_gather_and_consume", None
                 )
-                if self.custom_ag is None:
-                    raise RuntimeError("Decode FP8 staging AllGather is unavailable")
-            else:
-                local_m = self.max_m // self.world_size
-                groups = (self.hidden_size + 511) // 512
-                aligned_local_m = (local_m + 3) // 4 * 4
-                ag_bytes = local_m * self.hidden_size + groups * aligned_local_m * 4
-                symm.get_symm_mem_workspace(group.group_name, min_size=ag_bytes)
-                self.custom_ag = create_custom_all_gather(
-                    group,
-                    self.device,
-                    max_m=min(self.max_m, 4095 * self.world_size),
-                    k=self.hidden_size,
-                    fp8=True,
-                    staging_only=False,
-                )
+                if _all_ready(callable(pipeline), group):
+                    local_m = self.max_m // self.world_size
+                    groups = self.hidden_size // 512
+                    aligned_m = (local_m + 3) // 4 * 4
+                    ag_bytes = local_m * self.hidden_size + groups * aligned_m * 4
+                    symm.get_symm_mem_workspace(group.group_name, min_size=ag_bytes)
+                    self.pipelined_ag = pipeline
         self.rs_workspace = None
         self.deep_gemm = None
         self.push_rs = None
         if enable_rs:
-            if decode_staging:
-                self.push_rs = create_push_reduce_scatter(
-                    group,
-                    self.device,
-                    max_m=self.max_m if decode_staging else min(self.max_m, 512),
-                    n=self.hidden_size,
-                )
-                if self.push_rs is None and decode_staging:
-                    raise RuntimeError("Decode BF16 push ReduceScatter is unavailable")
-            else:
+            self.push_rs = create_push_reduce_scatter(
+                group,
+                self.device,
+                max_m=self.max_m if decode_staging else min(self.max_m, 512),
+                n=self.hidden_size,
+            )
+            if self.push_rs is not None and not decode_staging:
                 import deep_gemm
 
-                if not callable(getattr(deep_gemm, "fp8_gemm_rs_nt", None)):
-                    raise RuntimeError("DeepGEMM FP8 GEMM/RS API unavailable")
-                if not hasattr(deep_gemm, "GemmRSBuffer"):
-                    raise RuntimeError("DeepGEMM GEMM/RS workspace unavailable")
-                self.rs_workspace = deep_gemm.GemmRSBuffer(
-                    group, max_m=self.max_m, n=self.hidden_size, device=self.device
-                )
-                self.deep_gemm = deep_gemm
-                self.push_rs = create_push_reduce_scatter(
-                    group,
-                    self.device,
-                    max_m=min(self.max_m, 512),
-                    n=self.hidden_size,
-                )
+                available = callable(
+                    getattr(deep_gemm, "fp8_gemm_rs_nt", None)
+                ) and callable(getattr(deep_gemm, "GemmRSBuffer", None))
+                if _all_ready(available, group):
+                    self.rs_workspace = deep_gemm.GemmRSBuffer(
+                        group, max_m=self.max_m, n=self.hidden_size, device=self.device
+                    )
+                    self.deep_gemm = deep_gemm
 
     def can_run_ag(self, local_rows: int) -> bool:
         return 0 < local_rows and local_rows * self.world_size <= self.max_m
@@ -235,15 +221,23 @@ class Fp8CollectiveProjection:
                 out=output.narrow(0, rank * local_m, local_m),
             )
 
-        import torch.distributed._symmetric_memory as symm
-
-        symm._pipelined_multi_all_gather_and_consume(
-            [values_wire, scale_wire],
-            consume,
-            [gathered, gathered_scale],
-            self.group.group_name,
-            ag_out_needed=False,
-        )
+        if self.pipelined_ag is not None:
+            self.pipelined_ag(
+                [values_wire, scale_wire],
+                consume,
+                [gathered, gathered_scale],
+                self.group.group_name,
+                ag_out_needed=False,
+            )
+        else:
+            # NCCL receives the same rank-major wire as the pipeline. Slice
+            # each rank's packed scales separately to skip its TMA padding.
+            dist.all_gather_into_tensor(gathered, values_wire, group=self.group)
+            dist.all_gather_into_tensor(gathered_scale, scale_wire, group=self.group)
+            for rank, pair in enumerate(
+                zip(gathered.split(local_m), gathered_scale.split(scale_wire.shape[0]))
+            ):
+                consume(pair, rank)
         return output
 
     def gemm_reduce_scatter(self, values, scales, projection):
@@ -261,7 +255,7 @@ class Fp8CollectiveProjection:
             or projection.bias is not None
         ):
             raise ValueError("FP8 GEMM/RS input or projection is incompatible")
-        if self.decode_staging or m < 512:
+        if self.rs_workspace is None or m < 512:
             partial = projection.forward_quantized(values, scales)
             return self.reduce_scatter_bf16(partial)
         output = torch.empty(

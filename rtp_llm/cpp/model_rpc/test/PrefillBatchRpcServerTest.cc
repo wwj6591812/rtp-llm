@@ -554,6 +554,48 @@ TEST(PrefillBatchRpcServerTest, PrepareRetryStartsNoAttemptForExpiredRequest) {
     EXPECT_EQ(deferred->context->retry_times, 0);
 }
 
+TEST(PrefillBatchRpcServerTest, PrefillOnlySlotReturnsLocalOutputWithoutDecodeConnection) {
+    class RecordingWriter final: public grpc::internal::WriterInterface<GenerateOutputsPB> {
+    public:
+        bool Write(const GenerateOutputsPB& output, grpc::WriteOptions) override {
+            outputs.push_back(output);
+            return true;
+        }
+        std::vector<GenerateOutputsPB> outputs;
+    };
+
+    PrefillBatchRpcServer server;
+    server.engine_ = std::make_shared<PartialEnqueueEngine>();
+    for (const bool explicit_prefill_only : {false, true}) {
+        SCOPED_TRACE(explicit_prefill_only);
+        auto deferred = makeDeferred(server, 66 + explicit_prefill_only);
+        deferred->input->add_token_ids(1);
+        deferred->input->mutable_generate_config()->set_max_new_tokens(0);
+        deferred->input->mutable_generate_config()->set_prefill_only(explicit_prefill_only);
+        auto&      context = *deferred->context;
+        const auto result  = server.prepareSlotWithRetry(context, 0, 0);
+        ASSERT_TRUE(result.prepared) << result.stage_status.error_message();
+        EXPECT_FALSE(context.generate_input->generate_config->pd_separation);
+        EXPECT_FALSE(context.client_stream);
+
+        auto stream                      = makeGenerateStream(context.generate_input);
+        stream->generate_status_->status = StreamState::RUNNING;
+        context.setStream(stream);
+        stream->update({torch::empty({1, 0}, torch::kInt32), 0});
+        RecordingWriter writer;
+        context.rpc_context.writer = &writer;
+        const auto status          = server.finishStream(context);
+        context.markRpcHandlingCompleted();
+        ASSERT_TRUE(status.ok()) << status.error_message();
+        EXPECT_TRUE(context.finished);
+        ASSERT_EQ(writer.outputs.size(), 1);
+        const auto& output = writer.outputs.front().flatten_output();
+        EXPECT_TRUE(output.finished(0));
+        EXPECT_TRUE(output.has_output_ids());
+        EXPECT_TRUE(output.output_ids().int32_data().empty());
+    }
+}
+
 TEST(PrefillBatchRpcServerTest, PartialSchedulerRejectionCleansRejectedPrefillResources) {
     PrefillBatchRpcServer server;
     server.meta_   = std::make_shared<RpcServerRuntimeMeta>();
