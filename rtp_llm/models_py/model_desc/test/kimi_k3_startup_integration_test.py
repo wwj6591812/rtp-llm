@@ -20,6 +20,7 @@ from rtp_llm.models_py.modules.factory.attention.cuda_mla_impl.flashmla_sparse_p
 )
 from rtp_llm.models_py.modules.factory.attention.kda_impl import KdaMetadata, KdaPrefill
 from rtp_llm.models_py.modules.factory.linear.impl.cuda.f16_linear import CudaF16Linear
+from rtp_llm.models_py.modules.hybrid.query_layout import AttentionInputView
 from rtp_llm.models_py.modules.kimi_k3.dsa import KimiK31DSA
 from rtp_llm.models_py.triton_kernels.causal_conv1d.paged_short_conv_prefill import (
     paged_short_conv_prefill,
@@ -92,7 +93,8 @@ class KimiK3StartupIntegrationTest(unittest.TestCase):
         prefill = KdaPrefill(config, ParallelismConfig(), weights)
         # Native C++ supplies the read-only device mirrors. Recreate their
         # published values here while exercising the real shared KDA forward.
-        inputs = NS(
+        inputs = AttentionInputView(
+            PyAttentionInputs(),
             is_prefill=True,
             is_warmup=True,
             cache_store_inputs=None,
